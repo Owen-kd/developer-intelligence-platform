@@ -49,4 +49,4 @@ curl http://localhost:8000/health
 - AI 개발 프로세스: [.ai/workflow/](.ai/workflow/) (Discovery → Design → Implementation → Review → Release)
 - 폴더 구조 상세: [.ai/architecture/folder-structure.md](.ai/architecture/folder-structure.md)
 - 의사결정 기록(ADR): [.ai/decisions/](.ai/decisions/)
-- 로드맵: [.ai/context/roadmap.md](.ai/context/roadmap.md)
+- 로드맵: [.ai/planning/roadmap.md](.ai/planning/roadmap.md)

@@ -10,7 +10,7 @@
 2. **머지** — 작은 논리 단위 커밋, 명확한 메시지. 필요 시 PR.
 3. **문서 갱신**
    - [../context/current-task.md] — 완료 항목 체크, 다음 작업.
-   - [../context/roadmap.md] — Phase 진행 반영(해당 시).
+   - [../planning/roadmap.md] · [../planning/milestones.md] — Phase/이정표 진행 반영(해당 시).
    - 새 지식은 [../knowledge/], 결정은 [../decisions/].
 4. **회고 한 줄** — 무엇이 잘/안 됐는지, 다음에 바꿀 것.
 
