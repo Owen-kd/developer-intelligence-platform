@@ -1,0 +1,40 @@
+"""중앙 설정. 환경변수(.env)를 단일 소스로 로드한다.
+
+modules/ 는 이 설정을 직접 읽지 않고, infrastructure/ 계층이 사용한다.
+"""
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # App
+    app_env: str = "local"
+    app_debug: bool = True
+
+    # Postgres
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_user: str = "dip"
+    postgres_password: str = "dip"
+    postgres_db: str = "dip"
+
+    @property
+    def postgres_dsn(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """프로세스당 한 번만 로드되는 설정 싱글턴."""
+    return Settings()

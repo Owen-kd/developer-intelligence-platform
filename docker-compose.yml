@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dip-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dip}
+      POSTGRES_DB: ${POSTGRES_DB:-dip}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./docker/postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: dip-neo4j
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-dip-neo4j}
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt
+    volumes:
+      - ./docker/neo4j/data:/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: dip-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./docker/redis/data:/data
