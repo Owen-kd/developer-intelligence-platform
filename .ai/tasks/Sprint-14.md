@@ -1,6 +1,6 @@
 # Sprint-14 — 실 어댑터 연동 (LLM / Jira / Git) + Postgres 배선
 
-- 상태: Todo
+- 상태: In Progress — ✅ 실 Jira 수집(PA20) → Postgres 적재 검증 완료. 남음: 실 LLM, 실 Git, API 를 Postgres 로 배선.
 - Phase / Milestone: 실사용 전환 (walking skeleton → 첫 실데이터 동작)
 - 의존성: Sprint-02~13 완료(전 파이프라인 fake/in-memory 동작)
 - 선행 승인: [APR-002](../planning/approvals/APR-002-jira-access-pii.md), [APR-003](../planning/approvals/APR-003-dependencies.md), [APR-005](../planning/approvals/APR-005-llm-vendor-data.md)

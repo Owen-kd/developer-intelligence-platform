@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     postgres_password: str = "dip"
     postgres_db: str = "dip"
 
+    # Jira (infrastructure 계층에서만 사용)
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+
     @property
     def postgres_dsn(self) -> str:
         return (
