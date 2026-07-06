@@ -16,6 +16,18 @@
 - [x] prompts 디렉터리 추가: `prompts/knowledge`, `prompts/incident`
 - [x] `.ai/README.md` 인덱스 개정
 
+## 다음 작업 (코드 재개 시 여기부터)
+**[Sprint-14](../tasks/Sprint-14.md) — 실 어댑터 연동(LLM/Jira/Git) + Postgres 배선** (walking skeleton → 첫 실데이터 동작).
+최소 경로: ① 실 Anthropic 어댑터 + Postgres 배선 → ② 실 Jira → ③ 실 Git.
+착수 전 승인: [APR-002/003/005](../planning/approvals/).
+
+## 다른 기계에서 이어가기 (Resume anywhere)
+1. `git clone <origin>` → 브랜치 `feature/dip-full-build` 체크아웃.
+2. Claude Code 열기 → `CLAUDE.md` 가 `.ai/` 자동 로드 → 이 파일(current-task) + [state](../state/current-architecture.md) 로 현황 파악.
+3. 로컬 세팅: Python 3.11+ 설치 → `python -m venv .venv` → `.venv` 활성화 → `pip install -e ".[dev]"` → `ruff/mypy/pytest` 로 검증. (라이브 DB 검증 시 비ASCII 홈경로면 `PGSSLMODE=disable`.)
+4. [Sprint-14](../tasks/Sprint-14.md) 부터 이어서 진행.
+> 대화 맥락은 이 저장소의 `.ai/` 가 Single Source of Truth 다(채팅 기억은 기계 간 이동 안 됨).
+
 ## 다음 후보 (M1 — First Collector, 코드 재개 시)
 - [ ] EventBus 인터페이스 (`platform/event`) → [Sprint-02](../tasks/Sprint-02.md)
 - [ ] 첫 도메인 모듈: `jira` (Collector → Event → 저장) → [Sprint-03](../tasks/Sprint-03.md)
