@@ -38,6 +38,18 @@ def test_parse_json_output_ok() -> None:
     assert parsed["category"] == "bug"
 
 
+def test_parse_json_output_strips_markdown_fence() -> None:
+    raw = '```json\n{"category": "bug", "priority": "high"}\n```'
+    parsed = parse_json_output(raw, required=("category",))
+    assert parsed["category"] == "bug"
+
+
+def test_parse_json_output_extracts_from_preamble() -> None:
+    raw = 'Here is the result:\n{"category": "ops", "priority": "low"} — done'
+    parsed = parse_json_output(raw, required=("category", "priority"))
+    assert parsed["priority"] == "low"
+
+
 def test_parse_json_output_rejects_non_json() -> None:
     with pytest.raises(ValidationError):
         parse_json_output("not json at all")

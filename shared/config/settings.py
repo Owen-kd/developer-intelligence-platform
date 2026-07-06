@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     postgres_password: str = "dip"
     postgres_db: str = "dip"
 
+    # LLM (infrastructure 계층에서만 사용)
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5"  # 분류/요약엔 가장 저렴한 모델. 필요 시 상향.
+
     # Jira (infrastructure 계층에서만 사용)
     jira_base_url: str = ""
     jira_email: str = ""
