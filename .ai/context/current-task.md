@@ -17,9 +17,15 @@
 - [x] `.ai/README.md` 인덱스 개정
 
 ## 다음 작업 (코드 재개 시 여기부터)
-**[Sprint-14](../tasks/Sprint-14.md) — 실 어댑터 연동(LLM/Jira/Git) + Postgres 배선** (walking skeleton → 첫 실데이터 동작).
-최소 경로: ① 실 Anthropic 어댑터 + Postgres 배선 → ② 실 Jira → ③ 실 Git.
-착수 전 승인: [APR-002/003/005](../planning/approvals/).
+**[Sprint-15](../tasks/Sprint-15.md) — 지식 어시스트 (Inquiry Assist + Legacy Rationale)** ← 현재 방향/우선순위.
+- 목적: ① 1:1 문의(툴팀 PA20-/엔진팀 ENG-)의 개발 확인 5~6h 단축, ② 퇴사 기획자의 레거시 "왜" 재구성.
+- 엔진: 과거 Jira+Git 검색 → LLM 종합(근거 인용 강제) → Jira 코멘트+Slack+NaverWorks 전달.
+- 아키텍처: 순수 벡터 RAG 아님 → 하이브리드([ADR-006](../decisions/ADR-006-knowledge-retrieval-architecture.md)). 지금은 Jira검색+LLM, 스케일 시 pgvector+로컬임베딩.
+- MVP: `assist <이슈키/텍스트>` → 관련 과거건+배경·왜+원인+해결+담당(접두사)+확신도+근거.
+- 완료된 것: 실 Jira 수집→Postgres, 실 Anthropic LLM 분류(건당 ~1.24원) 검증됨. 배포 아티팩트(Dockerfile) 작성 중(VPS, 앱+DB 전부 서버).
+
+**[Sprint-14](../tasks/Sprint-14.md) — 실 어댑터 연동** (부분 완료): 실 Jira/LLM ✅. 남음: 실 Git, API를 Postgres로 배선.
+착수 전 승인: [APR-002/003/004/005](../planning/approvals/).
 
 ## 다른 기계에서 이어가기 (Resume anywhere)
 1. `git clone <origin>` → 브랜치 `feature/dip-full-build` 체크아웃.
