@@ -29,7 +29,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 # Modular Monolith: 각 최상위 폴더가 독립 패키지
-packages = ["apps", "modules", "platform", "infrastructure", "shared"]
+packages = ["apps", "modules", "dip_platform", "infrastructure", "shared"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

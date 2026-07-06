@@ -9,13 +9,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from apps.api.routers import impact_analyses, incidents, issues
+from apps.composition import build_and_run
 from infrastructure.postgres import connection as pg
 from shared.config.settings import get_settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # startup: 필요 시 이벤트버스/워커 초기화 지점
+    # startup: 인메모리 파이프라인을 조립·실행해 리포트 데이터를 준비한다.
+    app.state.dip = await build_and_run()
     yield
     # shutdown: 커넥션 풀 정리
     await pg.dispose()
@@ -26,6 +29,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+app.include_router(issues.router)
+app.include_router(impact_analyses.router)
+app.include_router(incidents.router)
 
 
 @app.get("/health", tags=["system"])

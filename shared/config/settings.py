@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     app_env: str = "local"
     app_debug: bool = True
 
+    # Auth (내부 도구 최소 모델 — 로컬 기본값. 운영은 시크릿 매니저로 주입)
+    api_token: str = "dev-token"
+
     # Postgres
     postgres_host: str = "localhost"
     postgres_port: int = 5432
