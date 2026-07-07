@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from apps.composition import _impact_response, _triage_response
 from dip_platform.audit import InMemoryAuditLog
 from dip_platform.context import ContextBuilder
-from dip_platform.event import InMemoryEventBus
+from dip_platform.event import Event, InMemoryEventBus
 from dip_platform.registry import FilePromptRegistry
 from dip_platform.workflow import WorkflowRunner
 from dip_platform.workflow.agents.impact import ImpactAgent, ImpactPipeline
@@ -38,6 +38,7 @@ from modules.incident.domain.entity import KnowledgeRef
 from modules.incident.domain.repository import KnowledgeReader
 from modules.incident.infrastructure.repository import InMemoryIncidentRepository
 from modules.jira.application.service import JiraService
+from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
 from modules.knowledge.application.recorder import AgentKnowledgeRecorder
 from modules.knowledge.application.service import PromotionService
@@ -159,4 +160,58 @@ async def build_and_run_pg() -> DipPostgresApp:
         audit=audit,
         llm_mode=llm_mode,
         jira_mode=jira_mode,
+    )
+
+
+@dataclass
+class CollectResult:
+    """수집+정제 1회 결과 요약 (LLM 미사용)."""
+
+    jira_mode: str
+    issues_synced: int
+    issues_created: int
+    refined: int  # 이번에 정제(issue_summary 승격)한 신규 이슈 수
+    total_in_db: int
+
+
+async def collect_and_refine() -> CollectResult:
+    """수집 + 저비용 정제만 수행한다(LLM 0). 판단(triage/impact)은 분리된 단계.
+
+    - 실 Jira 수집(페이지네이션) → Postgres 멱등 upsert + Event 적재.
+    - 신규 이슈만 `issue_summary` 로 승격(재실행 시 중복 정제 없음).
+    수집(대량/저렴)과 LLM 판단(선별/고비용)을 분리해 스케일에서 낭비를 없앤다.
+    """
+    settings = get_settings()
+
+    store = PostgresEventStore()
+    bus = InMemoryEventBus(store=store)
+
+    issue_repo = PostgresIssueRepository()
+    jira_client, jira_mode = _build_jira(settings)
+    jira = JiraService(jira_client, issue_repo, bus)
+
+    reader = PostgresIssueSourceReader()
+    knowledge_repo = PostgresKnowledgeRepository()
+    promotion = PromotionService(reader, knowledge_repo, bus)
+
+    new_ids: list[str] = []
+
+    async def _capture_new(event: Event) -> None:
+        issue_id = getattr(event.payload, "issue_id", None)
+        if issue_id is not None:
+            new_ids.append(str(issue_id))
+
+    bus.subscribe(ISSUE_CREATED, _capture_new)  # 신규 이슈만 정제 대상으로 수집
+
+    sync = await jira.sync()
+    for issue_id in new_ids:
+        await promotion.promote_issue(issue_id)  # 원천 → Knowledge(issue_summary), LLM 없음
+
+    total = len(await issue_repo.list_issues())
+    return CollectResult(
+        jira_mode=jira_mode,
+        issues_synced=sync.issues_synced,
+        issues_created=sync.issues_created,
+        refined=len(new_ids),
+        total_in_db=total,
     )

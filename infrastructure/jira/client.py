@@ -137,6 +137,7 @@ class HttpJiraClient(JiraClient):
     """
 
     _FIELDS = "summary,status,issuetype,priority,created,updated,comment"
+    _PAGE_SIZE = 100  # /search/jql 페이지 상한
 
     def __init__(
         self,
@@ -154,18 +155,30 @@ class HttpJiraClient(JiraClient):
         self._max = max_issues
 
     async def fetch_issues(self) -> list[JiraIssue]:
-        params: dict[str, str | int] = {
-            "jql": self._jql,
-            "maxResults": self._max,
-            "fields": self._FIELDS,
-        }
+        """max_issues 에 도달하거나 마지막 페이지까지 nextPageToken 으로 순회한다."""
+        collected: list[JiraIssue] = []
+        token: str | None = None
         async with httpx.AsyncClient(auth=self._auth, timeout=30.0) as client:
-            resp = await client.get(
-                f"{self._base}/rest/api/3/search/jql",
-                params=params,
-                headers={"Accept": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        issues = data.get("issues", []) if isinstance(data, dict) else []
-        return [_map_issue(raw) for raw in issues if isinstance(raw, dict)]
+            while len(collected) < self._max:
+                params: dict[str, str | int] = {
+                    "jql": self._jql,
+                    "maxResults": min(self._PAGE_SIZE, self._max - len(collected)),
+                    "fields": self._FIELDS,
+                }
+                if token:
+                    params["nextPageToken"] = token
+                resp = await client.get(
+                    f"{self._base}/rest/api/3/search/jql",
+                    params=params,
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, dict):
+                    break
+                page = [_map_issue(r) for r in data.get("issues", []) if isinstance(r, dict)]
+                collected.extend(page)
+                token = data.get("nextPageToken")
+                if data.get("isLast", True) or not token or not page:
+                    break
+        return collected[: self._max]

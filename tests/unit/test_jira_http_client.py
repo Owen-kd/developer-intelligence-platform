@@ -91,3 +91,59 @@ async def test_fetch_issues_via_mock_transport(monkeypatch: pytest.MonkeyPatch) 
 def test_missing_config_raises() -> None:
     with pytest.raises(ValueError):
         HttpJiraClient("", "e", "t", "P")
+
+
+@pytest.mark.asyncio
+async def test_pagination_follows_next_page_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """nextPageToken 을 따라 여러 페이지를 순회해 max_issues 만큼 모은다."""
+    calls: list[str | None] = []
+
+    def _issue(key: str) -> dict[str, object]:
+        return {"key": key, "fields": {"summary": key, "status": {"name": "미해결"}}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.url.params.get("nextPageToken")
+        calls.append(token)
+        if token is None:
+            return httpx.Response(
+                200, json={"issues": [_issue("PA20-2")], "nextPageToken": "t1", "isLast": False}
+            )
+        return httpx.Response(200, json={"issues": [_issue("PA20-1")], "isLast": True})
+
+    real = httpx.AsyncClient
+
+    def _mock(**kwargs: object) -> httpx.AsyncClient:
+        kwargs.pop("auth", None)
+        return real(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock)
+
+    client = HttpJiraClient("https://x.atlassian.net", "e@x.com", "tok", "PA20", max_issues=10)
+    issues = await client.fetch_issues()
+
+    assert [i.key for i in issues] == ["PA20-2", "PA20-1"]  # 2페이지 누적
+    assert calls == [None, "t1"]  # 토큰 순회
+
+
+@pytest.mark.asyncio
+async def test_pagination_respects_max_issues(monkeypatch: pytest.MonkeyPatch) -> None:
+    """max_issues 에 도달하면 다음 페이지가 있어도 멈춘다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        n = int(request.url.params.get("maxResults", "0"))
+        issues = [{"key": f"PA20-{i}", "fields": {"summary": "s"}} for i in range(n)]
+        body = {"issues": issues, "nextPageToken": "more", "isLast": False}
+        return httpx.Response(200, json=body)
+
+    real = httpx.AsyncClient
+
+    def _mock(**kwargs: object) -> httpx.AsyncClient:
+        kwargs.pop("auth", None)
+        return real(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock)
+
+    client = HttpJiraClient("https://x.atlassian.net", "e@x.com", "tok", "PA20", max_issues=3)
+    issues = await client.fetch_issues()
+
+    assert len(issues) == 3  # maxResults=min(100,3)=3 → 첫 페이지에서 충족
