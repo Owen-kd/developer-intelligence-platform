@@ -38,13 +38,17 @@ class Settings(BaseSettings):
     def jira_configured(self) -> bool:
         return bool(self.jira_base_url and self.jira_email and self.jira_api_token)
 
-    # Git (읽기 전용 로컬 저장소 — git log 파싱)
-    git_repo_path: str = ""
-    git_max_commits: int = 2000  # bounded 수집(최근 N 커밋)
+    # Git (읽기 전용 로컬 저장소들 — git log 파싱. 콤마로 여러 repo)
+    git_repo_paths: str = ""
+    git_max_commits: int = 2000  # repo당 bounded 수집(최근 N 커밋)
+
+    @property
+    def git_repo_list(self) -> list[str]:
+        return [p.strip() for p in self.git_repo_paths.split(",") if p.strip()]
 
     @property
     def git_configured(self) -> bool:
-        return bool(self.git_repo_path)
+        return bool(self.git_repo_list)
 
     # Postgres
     postgres_host: str = "localhost"

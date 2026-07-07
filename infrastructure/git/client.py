@@ -107,3 +107,18 @@ class LocalGitClient(GitClient):
             detail = err.decode("utf-8", errors="replace")[:200]
             raise RuntimeError(f"git log 실패({self._repo}): {detail}")
         return parse_git_log(out.decode("utf-8", errors="replace"))
+
+
+class MultiRepoGitClient(GitClient):
+    """여러 저장소의 커밋을 합쳐 반환한다(프론트/백엔드/워커 등 멀티 repo)."""
+
+    def __init__(self, clients: list[GitClient]) -> None:
+        if not clients:
+            raise ValueError("최소 하나의 Git 클라이언트가 필요합니다.")
+        self._clients = clients
+
+    async def fetch_commits(self) -> list[GitCommit]:
+        collected: list[GitCommit] = []
+        for client in self._clients:
+            collected.extend(await client.fetch_commits())
+        return collected

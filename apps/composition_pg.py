@@ -24,7 +24,12 @@ from dip_platform.workflow import WorkflowRunner
 from dip_platform.workflow.agents.impact import ImpactAgent, ImpactPipeline
 from dip_platform.workflow.agents.triage import TriageAgent, TriagePipeline
 from infrastructure.anthropic.client import AnthropicClient
-from infrastructure.git.client import FakeGitClient, GitClient, LocalGitClient
+from infrastructure.git.client import (
+    FakeGitClient,
+    GitClient,
+    LocalGitClient,
+    MultiRepoGitClient,
+)
 from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres.event_store import PostgresEventStore
@@ -84,10 +89,13 @@ def _build_jira(settings: Settings) -> tuple[JiraClient, str]:
 
 
 def _build_git(settings: Settings) -> tuple[GitClient, str]:
-    """(Git 클라이언트, 모드) — 로컬 repo 경로가 있으면 실 git log, 없으면 Fake."""
-    if settings.git_configured:
-        return LocalGitClient(settings.git_repo_path, settings.git_max_commits), "local"
-    return FakeGitClient(), "fake"
+    """(Git 클라이언트, 모드) — 로컬 repo 경로들이 있으면 실 git log(멀티 repo), 없으면 Fake."""
+    paths = settings.git_repo_list
+    if not paths:
+        return FakeGitClient(), "fake"
+    clients: list[GitClient] = [LocalGitClient(p, settings.git_max_commits) for p in paths]
+    client = clients[0] if len(clients) == 1 else MultiRepoGitClient(clients)
+    return client, f"local×{len(paths)}"
 
 
 class _KnowledgeReaderAdapter(KnowledgeReader):

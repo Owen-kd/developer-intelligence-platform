@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from infrastructure.git.client import LocalGitClient, parse_git_log
+import pytest
+
+from infrastructure.git.client import (
+    FakeGitClient,
+    GitCommit,
+    LocalGitClient,
+    MultiRepoGitClient,
+    parse_git_log,
+)
 from modules.git.domain.entity import parse_issue_keys
 
 _US = "\x1f"
@@ -35,7 +43,18 @@ def test_issue_key_parsing_real_branch_format() -> None:
 
 
 def test_missing_repo_path_raises() -> None:
-    import pytest
-
     with pytest.raises(ValueError):
         LocalGitClient("")
+
+
+async def test_multi_repo_concatenates_commits() -> None:
+    a = FakeGitClient([GitCommit("s1", "u", "PA20-1 fix", "2026-01-01T00:00:00+00:00")])
+    b = FakeGitClient([GitCommit("s2", "v", "PA20-2 feat", "2026-01-02T00:00:00+00:00")])
+    multi = MultiRepoGitClient([a, b])
+    commits = await multi.fetch_commits()
+    assert [c.sha for c in commits] == ["s1", "s2"]
+
+
+def test_multi_repo_requires_clients() -> None:
+    with pytest.raises(ValueError):
+        MultiRepoGitClient([])
