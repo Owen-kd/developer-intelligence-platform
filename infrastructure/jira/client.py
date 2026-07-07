@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+import httpx
 
 
 @dataclass(frozen=True)
@@ -78,3 +81,91 @@ class FakeJiraClient(JiraClient):
 
     async def fetch_issues(self) -> list[JiraIssue]:
         return list(self._issues)
+
+
+def _adf_to_text(node: object) -> str:
+    """Atlassian Document Format(ADF) 트리에서 평문을 추출한다(코멘트 본문용)."""
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return str(node.get("text", ""))
+    content = node.get("content")
+    inner = "".join(_adf_to_text(c) for c in content) if isinstance(content, list) else ""
+    block = {"paragraph", "heading", "listItem", "blockquote", "codeBlock"}
+    return inner + "\n" if node.get("type") in block else inner
+
+
+def _named(fields: Mapping[str, object], key: str) -> str:
+    value = fields.get(key)
+    return str(value["name"]) if isinstance(value, dict) and value.get("name") else "Unknown"
+
+
+def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
+    fields_obj = raw.get("fields", {})
+    fields: Mapping[str, object] = fields_obj if isinstance(fields_obj, dict) else {}
+
+    comment_field = fields.get("comment")
+    raw_comments = comment_field.get("comments", []) if isinstance(comment_field, dict) else []
+    comments = tuple(
+        JiraComment(
+            external_id=str(c.get("id", "")),
+            # PII 최소화: 작성자는 표시명만 저장(이메일/계정ID 미저장) — APR-002
+            author=str((c.get("author") or {}).get("displayName", "unknown")),
+            body=_adf_to_text(c.get("body")).strip(),
+            created_at=str(c.get("created", "")),
+        )
+        for c in raw_comments
+        if isinstance(c, dict)
+    )
+    return JiraIssue(
+        key=str(raw.get("key", "")),
+        type=_named(fields, "issuetype"),
+        status=_named(fields, "status"),
+        priority=_named(fields, "priority"),
+        summary=str(fields.get("summary", "")),
+        created_at=str(fields.get("created", "")),
+        updated_at=str(fields.get("updated", "")),
+        comments=comments,
+    )
+
+
+class HttpJiraClient(JiraClient):
+    """실 Jira Cloud REST v3 읽기 전용 어댑터([APR-002], [ADR-007]).
+
+    Enhanced JQL 검색(`/search/jql`)을 사용한다(classic `/search` 는 410 Gone).
+    수집은 bounded(최근 N개) — 전량 증분 동기화는 후속 과제.
+    """
+
+    _FIELDS = "summary,status,issuetype,priority,created,updated,comment"
+
+    def __init__(
+        self,
+        base_url: str,
+        email: str,
+        api_token: str,
+        project_key: str,
+        max_issues: int = 10,
+    ) -> None:
+        if not (base_url and email and api_token and project_key):
+            raise ValueError("Jira 설정이 비어 있습니다 (.env JIRA_*).")
+        self._base = base_url.rstrip("/")
+        self._auth = httpx.BasicAuth(email, api_token)
+        self._jql = f"project={project_key} ORDER BY created DESC"
+        self._max = max_issues
+
+    async def fetch_issues(self) -> list[JiraIssue]:
+        params: dict[str, str | int] = {
+            "jql": self._jql,
+            "maxResults": self._max,
+            "fields": self._FIELDS,
+        }
+        async with httpx.AsyncClient(auth=self._auth, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._base}/rest/api/3/search/jql",
+                params=params,
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        issues = data.get("issues", []) if isinstance(data, dict) else []
+        return [_map_issue(raw) for raw in issues if isinstance(raw, dict)]

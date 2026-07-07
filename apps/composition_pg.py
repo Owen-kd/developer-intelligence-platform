@@ -25,7 +25,7 @@ from dip_platform.workflow.agents.impact import ImpactAgent, ImpactPipeline
 from dip_platform.workflow.agents.triage import TriageAgent, TriagePipeline
 from infrastructure.anthropic.client import AnthropicClient
 from infrastructure.git.client import FakeGitClient
-from infrastructure.jira.client import FakeJiraClient
+from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres.event_store import PostgresEventStore
 from modules.git.application.service import GitService
@@ -68,6 +68,20 @@ def _build_llm(settings: Settings) -> tuple[LLMClient, LLMClient]:
     )
 
 
+def _build_jira(settings: Settings) -> tuple[JiraClient, str]:
+    """(Jira 클라이언트, 모드) — 설정이 있으면 실 HTTP, 없으면 Fake."""
+    if settings.jira_configured:
+        client = HttpJiraClient(
+            base_url=settings.jira_base_url,
+            email=settings.jira_email,
+            api_token=settings.jira_api_token,
+            project_key=settings.jira_project_key,
+            max_issues=settings.jira_max_issues,
+        )
+        return client, "http"
+    return FakeJiraClient(), "fake"
+
+
 class _KnowledgeReaderAdapter(KnowledgeReader):
     """Knowledge 저장소를 incident 의 KnowledgeReader 포트로 노출한다(조립 계층)."""
 
@@ -88,6 +102,7 @@ class DipPostgresApp:
     incident_repo: InMemoryIncidentRepository
     audit: InMemoryAuditLog
     llm_mode: str  # "anthropic" | "fake"
+    jira_mode: str  # "http" | "fake"
 
 
 async def build_and_run_pg() -> DipPostgresApp:
@@ -98,7 +113,8 @@ async def build_and_run_pg() -> DipPostgresApp:
     audit = InMemoryAuditLog()
 
     issue_repo = PostgresIssueRepository()
-    jira = JiraService(FakeJiraClient(), issue_repo, bus)
+    jira_client, jira_mode = _build_jira(settings)
+    jira = JiraService(jira_client, issue_repo, bus)
 
     commit_repo = PostgresCommitRepository()
     git = GitService(FakeGitClient(), commit_repo, bus)  # subscribes IssueCreated
@@ -142,4 +158,5 @@ async def build_and_run_pg() -> DipPostgresApp:
         incident_repo=incident_repo,
         audit=audit,
         llm_mode=llm_mode,
+        jira_mode=jira_mode,
     )

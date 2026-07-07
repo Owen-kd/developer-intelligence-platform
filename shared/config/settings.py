@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-4-8"
     llm_max_tokens: int = 1024
 
+    # Jira (infrastructure 계층에서만 사용. 읽기 전용 — APR-002)
+    jira_base_url: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+    jira_max_issues: int = 10  # bounded 수집(최근 N개) — 전량 증분은 후속
+
+    @property
+    def jira_configured(self) -> bool:
+        return bool(self.jira_base_url and self.jira_email and self.jira_api_token)
+
     # Postgres
     postgres_host: str = "localhost"
     postgres_port: int = 5432

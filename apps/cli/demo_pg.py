@@ -30,6 +30,7 @@ async def _main() -> None:
 
         _logger.info(
             "demo_pg.summary",
+            jira_mode=app.jira_mode,
             llm_mode=app.llm_mode,
             issues=len(issues),
             incidents=len(incidents),
