@@ -28,9 +28,44 @@
   - 실 LLM: **`claude-sonnet-5`**(소유자 지정, opus 아님). 첫 호출 시 코드펜스(```json```)로 폴백 발생 → `dip_platform/workflow/validation.py` 관용 파싱(펜스/프로즈 추출)으로 수정 → 재실행 시 폴백 없이 Triage(확신도 0.90)·Impact 생성·검증 통과.
   - 런타임 의존성 `greenlet` 누락(신규 Python) 발견 → `pyproject.toml` 명시 추가(SQLAlchemy async 필수).
 
-## 남은 것 (후속)
-- Step 1②/③: 실 Jira([APR-002]) / 실 Git 어댑터 — 현재 수집원은 Fake.
-- API 가 Postgres 에서 조회하도록 배선(`apps/api/main.py` 는 아직 인메모리 `build_and_run`). 영속 계층은 검증됨.
+## 실행 단계 계획 — 남은 ② → ③ → ④ (기대 출력 = 3계층 관측 값)
+
+> 각 단계의 "완료"는 **① CLI 로그 · ② DB 쿼리 · ③ API JSON** 세 관측 값이 아래 예시대로 나오는 것으로 판정한다.
+> 값(`<...>`)은 실데이터에 따라 달라지지만 **형태·불변식**은 고정이다. 착수는 "현재 단계만".
+
+### Stage ② — 실 Jira Collector  ⛔ 선행: [APR-002](../planning/approvals/APR-002-jira-access-pii.md) 승인 필요(Pending)
+- **목표**: `FakeJiraClient` → `HttpJiraClient(JiraClient)`. 실 `PA20` 프로젝트 이슈/코멘트를 **읽기 전용** 수집 → Event → Postgres(멱등 upsert).
+- **작업**: `infrastructure/jira/client.py`(httpx, `JIRA_*` 설정, JQL `project=PA20`, 페이지네이션). 신규 의존성 `httpx` 런타임([APR-003] 승인분) + ADR-007.
+- **기대 출력**
+  - ① CLI (`apps.cli.jira_sync` 또는 `demo_pg`):
+    `dip.jira.service jira.sync.done issues_synced=<N≥1> issues_created=<N> comments_added=<M>`  (N=실 PA20 이슈 수)
+  - ② DB: `SELECT jira_key, status FROM issues ORDER BY jira_key LIMIT 3;`
+    → `PA20-<n> | <status>` (가짜 `DIP-1` 아님). **멱등**: 재실행 시 `issues_created=0`.
+  - ③ API(④ 이후 완전 반영): `GET /issues` → `[{"jira_key":"PA20-<n>", "status":"<...>"}]`
+- **검증/게이트**: docker Postgres + 실 Jira 스모크 · ruff/mypy/pytest(어댑터 목킹).
+
+### Stage ③ — 실 Git Collector
+- **목표**: `FakeGitClient` → `LocalGitClient(GitClient)`(`git log` 파싱) 또는 provider API. 커밋 수집 + 이슈키(`PA20-\d+`) 파싱 링크.
+- **작업**: `infrastructure/git/client.py`(대상 repo 경로/브랜치 설정). git 은 `IssueCreated` 구독으로 매핑(모듈 직접 import 없음, 현행 유지).
+- **기대 출력**
+  - ① CLI: `dip.git.service git.sync.done commits_synced=<N> links_created=<M≥1>`
+  - ② DB: `SELECT c.sha FROM commits c JOIN issue_commits ic ON ic.commit_id=c.id;`
+    → 실제 40-hex(또는 단축) sha + 이슈 링크
+  - ③ API: `GET /issues/{PA20-n}` 상세에 linked commit sha 반영
+- **검증/게이트**: 대상 repo 스모크 · 품질 게이트.
+
+### Stage ④ — API 가 Postgres 를 조회(영속 서빙)
+- **목표**: `apps/api` 라우터가 **Postgres 저장소에서 읽는다**(현재는 인메모리 `build_and_run` 서빙). 재시작해도 응답 유지.
+- **설계 주의**: API lifespan 이 수집 파이프라인을 돌리지 않는다(수집=scheduler/cli, API=조회 전용). 라우터 DI 를 `Postgres*Repository` 로 교체 + 인증 유지.
+- **기대 출력**
+  - ① CLI: `uvicorn apps.api.main:app` 기동 후 `GET /health` → `{"status":"ok","dependencies":{"postgres":"up"}}`
+  - ② DB: 진실의 원천(변화 없음)
+  - ③ API: `curl -H "Authorization: Bearer $API_TOKEN" localhost:8000/issues`
+    → `[{"jira_key":"PA20-<n>", "priority":"<...>"}]` · **프로세스 재시작 후 동일 응답(영속 증명)**
+- **검증/게이트**: 재시작 전후 `/issues` 응답 동일 · 품질 게이트.
+
+### 단계 의존성
+`② (APR-002 승인) → ③ → ④`. ②/③ 는 수집 계층, ④ 는 조회 계층 — ④ 는 ②·③ 산출이 DB 에 있어야 의미가 완성된다.
 
 ## 성공 기준 (DoD)
 - [ ] 실 Anthropic 호출로 Triage/Impact 결과가 생성되고 스키마 검증을 통과한다(실패 시 폴백 유지).
