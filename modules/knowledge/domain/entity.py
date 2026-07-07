@@ -26,6 +26,7 @@ class IssueSnapshot:
     comments: tuple[str, ...]
     commit_shas: tuple[str, ...]
     source_event_ids: tuple[str, ...]
+    assignee: str = ""  # 담당자(enrich: "누가")
 
 
 @dataclass(frozen=True)

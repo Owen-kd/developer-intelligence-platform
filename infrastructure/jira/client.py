@@ -35,6 +35,7 @@ class JiraIssue:
     summary: str
     created_at: str
     updated_at: str
+    assignee: str = ""  # 담당자 표시명(PII 최소화)
     comments: tuple[JiraComment, ...] = field(default_factory=tuple)
 
 
@@ -55,6 +56,7 @@ _SAMPLE_ISSUES: tuple[JiraIssue, ...] = (
         summary="결제 API 간헐적 타임아웃",
         created_at="2026-07-01T09:00:00+00:00",
         updated_at="2026-07-02T10:30:00+00:00",
+        assignee="민수",
         comments=(
             JiraComment(
                 external_id="c-101",
@@ -117,6 +119,9 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
         for c in raw_comments
         if isinstance(c, dict)
     )
+    assignee_obj = fields.get("assignee")
+    assignee = str(assignee_obj["displayName"]) if isinstance(assignee_obj, dict) else ""
+
     return JiraIssue(
         key=str(raw.get("key", "")),
         type=_named(fields, "issuetype"),
@@ -125,6 +130,7 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
         summary=str(fields.get("summary", "")),
         created_at=str(fields.get("created", "")),
         updated_at=str(fields.get("updated", "")),
+        assignee=assignee,  # PII 최소화: 표시명만
         comments=comments,
     )
 
@@ -136,7 +142,7 @@ class HttpJiraClient(JiraClient):
     수집은 bounded(최근 N개) — 전량 증분 동기화는 후속 과제.
     """
 
-    _FIELDS = "summary,status,issuetype,priority,created,updated,comment"
+    _FIELDS = "summary,status,issuetype,priority,created,updated,assignee,comment"
     _PAGE_SIZE = 100  # /search/jql 페이지 상한
 
     def __init__(

@@ -41,6 +41,7 @@ def _to_issue(raw: JiraIssue) -> Issue:
         summary=raw.summary,
         created_at=raw.created_at,
         updated_at=raw.updated_at,
+        assignee=raw.assignee,
         comments=[
             Comment(
                 external_id=comment.external_id,

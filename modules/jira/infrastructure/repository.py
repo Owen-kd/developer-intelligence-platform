@@ -63,14 +63,16 @@ class PostgresIssueRepository(IssueRepository):
     async def upsert_issue(self, issue: Issue) -> str:
         query = text(
             """
-            INSERT INTO issues (jira_key, type, status, priority, summary, created_at, updated_at)
-            VALUES (:jira_key, :type, :status, :priority, :summary,
+            INSERT INTO issues
+                (jira_key, type, status, priority, summary, assignee, created_at, updated_at)
+            VALUES (:jira_key, :type, :status, :priority, :summary, :assignee,
                     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
             ON CONFLICT (jira_key) DO UPDATE SET
                 type = EXCLUDED.type,
                 status = EXCLUDED.status,
                 priority = EXCLUDED.priority,
                 summary = EXCLUDED.summary,
+                assignee = EXCLUDED.assignee,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = now()
             RETURNING id
@@ -85,6 +87,7 @@ class PostgresIssueRepository(IssueRepository):
                     "status": issue.status,
                     "priority": issue.priority,
                     "summary": issue.summary,
+                    "assignee": issue.assignee,
                     "created_at": _dt(issue.created_at),
                     "updated_at": _dt(issue.updated_at),
                 },

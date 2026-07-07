@@ -29,5 +29,6 @@ class Issue:
     summary: str
     created_at: str
     updated_at: str
+    assignee: str = ""
     comments: list[Comment] = field(default_factory=list)
     id: str | None = None

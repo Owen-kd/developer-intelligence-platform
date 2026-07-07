@@ -23,9 +23,10 @@ _KNOWLEDGE_TYPE = "issue_summary"
 
 
 def _build_summary(snapshot: IssueSnapshot) -> str:
+    who = f", 담당 {snapshot.assignee}" if snapshot.assignee else ""
     return (
         f"{snapshot.jira_key} ({snapshot.status}/{snapshot.priority}): {snapshot.summary} "
-        f"— 코멘트 {len(snapshot.comments)}건, 링크된 커밋 {len(snapshot.commit_shas)}건."
+        f"— 코멘트 {len(snapshot.comments)}건, 링크된 커밋 {len(snapshot.commit_shas)}건{who}."
     )
 
 
@@ -71,6 +72,7 @@ class PromotionService:
                 "jira_key": snapshot.jira_key,
                 "status": snapshot.status,
                 "priority": snapshot.priority,
+                "assignee": snapshot.assignee,
                 "comments": list(snapshot.comments),
                 "commit_shas": list(snapshot.commit_shas),
             },
