@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -52,3 +53,57 @@ class FakeGitClient(GitClient):
 
     async def fetch_commits(self) -> list[GitCommit]:
         return list(self._commits)
+
+
+# git log 파싱 구분자(메시지에 나올 일이 없는 제어문자): 필드=US(0x1f), 레코드=RS(0x1e)
+_FIELD = "\x1f"
+_RECORD = "\x1e"
+
+
+def parse_git_log(raw: str) -> list[GitCommit]:
+    """`git log --pretty=format:%H<US>%an<US>%cI<US>%B<RS>` 출력을 파싱한다."""
+    commits: list[GitCommit] = []
+    for record in raw.split(_RECORD):
+        record = record.strip("\n")
+        if not record.strip():
+            continue
+        parts = record.split(_FIELD)
+        if len(parts) < 4:
+            continue
+        sha, author, committed_at, message = parts[0], parts[1], parts[2], parts[3]
+        commits.append(
+            GitCommit(
+                sha=sha.strip(),
+                author=author.strip(),
+                message=message.strip(),
+                committed_at=committed_at.strip(),
+            )
+        )
+    return commits
+
+
+class LocalGitClient(GitClient):
+    """로컬 저장소 `git log` 를 파싱하는 읽기 전용 어댑터([APR-003], [ADR-008]).
+
+    수집은 bounded(최근 N 커밋). 커밋 메시지의 이슈키는 상위 GitService 가 파싱·링크한다.
+    """
+
+    _FMT = f"%H{_FIELD}%an{_FIELD}%cI{_FIELD}%B{_RECORD}"
+
+    def __init__(self, repo_path: str, max_commits: int = 2000) -> None:
+        if not repo_path:
+            raise ValueError("git_repo_path 가 비어 있습니다 (.env GIT_REPO_PATH).")
+        self._repo = repo_path
+        self._max = max_commits
+
+    async def fetch_commits(self) -> list[GitCommit]:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", self._repo, "log", f"-n{self._max}", f"--pretty=format:{self._FMT}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            detail = err.decode("utf-8", errors="replace")[:200]
+            raise RuntimeError(f"git log 실패({self._repo}): {detail}")
+        return parse_git_log(out.decode("utf-8", errors="replace"))

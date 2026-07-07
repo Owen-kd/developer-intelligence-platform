@@ -24,7 +24,7 @@ from dip_platform.workflow import WorkflowRunner
 from dip_platform.workflow.agents.impact import ImpactAgent, ImpactPipeline
 from dip_platform.workflow.agents.triage import TriageAgent, TriagePipeline
 from infrastructure.anthropic.client import AnthropicClient
-from infrastructure.git.client import FakeGitClient
+from infrastructure.git.client import FakeGitClient, GitClient, LocalGitClient
 from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres.event_store import PostgresEventStore
@@ -81,6 +81,13 @@ def _build_jira(settings: Settings) -> tuple[JiraClient, str]:
         )
         return client, "http"
     return FakeJiraClient(), "fake"
+
+
+def _build_git(settings: Settings) -> tuple[GitClient, str]:
+    """(Git 클라이언트, 모드) — 로컬 repo 경로가 있으면 실 git log, 없으면 Fake."""
+    if settings.git_configured:
+        return LocalGitClient(settings.git_repo_path, settings.git_max_commits), "local"
+    return FakeGitClient(), "fake"
 
 
 class _KnowledgeReaderAdapter(KnowledgeReader):
@@ -168,8 +175,11 @@ class CollectResult:
     """수집+정제 1회 결과 요약 (LLM 미사용)."""
 
     jira_mode: str
+    git_mode: str
     issues_synced: int
     issues_created: int
+    commits_synced: int
+    links_created: int  # 이슈↔커밋 신규 링크 수
     refined: int  # 이번에 정제(issue_summary 승격)한 신규 이슈 수
     total_in_db: int
 
@@ -190,6 +200,10 @@ async def collect_and_refine() -> CollectResult:
     jira_client, jira_mode = _build_jira(settings)
     jira = JiraService(jira_client, issue_repo, bus)
 
+    commit_repo = PostgresCommitRepository()
+    git_client, git_mode = _build_git(settings)
+    git = GitService(git_client, commit_repo, bus)  # IssueCreated 구독으로 jira_key→id 학습
+
     reader = PostgresIssueSourceReader()
     knowledge_repo = PostgresKnowledgeRepository()
     promotion = PromotionService(reader, knowledge_repo, bus)
@@ -203,15 +217,19 @@ async def collect_and_refine() -> CollectResult:
 
     bus.subscribe(ISSUE_CREATED, _capture_new)  # 신규 이슈만 정제 대상으로 수집
 
-    sync = await jira.sync()
+    sync = await jira.sync()  # 이슈/코멘트 수집 → 신규 IssueCreated 발행
+    git_sync = await git.sync()  # 커밋 수집 + 이슈키 파싱 → issues 테이블 조회로 링크
     for issue_id in new_ids:
         await promotion.promote_issue(issue_id)  # 원천 → Knowledge(issue_summary), LLM 없음
 
     total = len(await issue_repo.list_issues())
     return CollectResult(
         jira_mode=jira_mode,
+        git_mode=git_mode,
         issues_synced=sync.issues_synced,
         issues_created=sync.issues_created,
+        commits_synced=git_sync.commits_synced,
+        links_created=git_sync.links_created,
         refined=len(new_ids),
         total_in_db=total,
     )

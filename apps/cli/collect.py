@@ -25,8 +25,11 @@ async def _main() -> None:
         _logger.info(
             "collect.done",
             jira_mode=result.jira_mode,
+            git_mode=result.git_mode,
             issues_synced=result.issues_synced,
             issues_created=result.issues_created,
+            commits_synced=result.commits_synced,
+            links_created=result.links_created,
             refined=result.refined,
             total_in_db=result.total_in_db,
         )
