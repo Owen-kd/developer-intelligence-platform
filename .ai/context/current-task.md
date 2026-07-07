@@ -17,9 +17,10 @@
 - [x] `.ai/README.md` 인덱스 개정
 
 ## 다음 작업 (코드 재개 시 여기부터)
-**[Sprint-14](../tasks/Sprint-14.md) — 실 어댑터 연동(LLM/Jira/Git) + Postgres 배선** (walking skeleton → 첫 실데이터 동작).
-최소 경로: ① 실 Anthropic 어댑터 + Postgres 배선 → ② 실 Jira → ③ 실 Git.
-착수 전 승인: [APR-002/003/005](../planning/approvals/).
+**[Sprint-14](../tasks/Sprint-14.md) 진행 중** — 실 어댑터 연동(LLM/Jira/Git) + Postgres 배선.
+- [x] ① 실 Anthropic 어댑터([ADR-006](../decisions/ADR-006-anthropic-adapter.md)) + Postgres 배선([`apps/composition_pg`](../../apps/composition_pg.py)) — **라이브 검증 완료**(실 `claude-sonnet-5`, Postgres 영속). 승인 [APR-003](../planning/approvals/APR-003-dependencies.md)/[APR-005](../planning/approvals/APR-005-llm-vendor-data.md) 소유자 승인.
+  - 부수 수정: `greenlet` 의존성 명시, `validation.py` 코드펜스 관용 파싱.
+- [ ] ② 실 Jira([APR-002](../planning/approvals/APR-002-jira-access-pii.md) 승인 필요) → [ ] ③ 실 Git → [ ] API 를 Postgres 조회로 배선.
 
 ## 다른 기계에서 이어가기 (Resume anywhere)
 1. `git clone <origin>` → 브랜치 `feature/dip-full-build` 체크아웃.

@@ -19,6 +19,19 @@
      - `docker compose up` → `python -m apps.cli.migrate` → 스케줄러 적재 → API 는 DB 조회.
 - 안 하는 것(Non-goals): Neo4j 실구현(별도), 실 임베딩 모델(별도), 배포/CI(별도).
 
+## 진행 (2026-07-07)
+- [x] Step 0: 승인 게이트 기록 — [APR-003](../planning/approvals/APR-003-dependencies.md)(deps) · [APR-005](../planning/approvals/APR-005-llm-vendor-data.md)(LLM) 소유자 승인.
+- [x] Step 1①-a/b/d: `anthropic` 의존성([ADR-006](../decisions/ADR-006-anthropic-adapter.md)) + `infrastructure/anthropic/client.py`(`AnthropicClient(LLMClient)`) + 목킹 단위테스트. 전체 게이트 통과(ruff/mypy strict 173/pytest 41). 테스트 격리 버그(전역 async 엔진) `tests/conftest.py`로 수정.
+- [x] Step 1①-c: Postgres 배선 조립 루트 [`apps/composition_pg.py`](../../apps/composition_pg.py)(`build_and_run_pg`) + 실 LLM 팩토리(`ANTHROPIC_API_KEY` 있으면 실 Anthropic, 없으면 Fake) + 러너 [`apps/cli/demo_pg.py`](../../apps/cli/demo_pg.py). 오프라인 팩토리 테스트 포함. 게이트: ruff/mypy strict 176/pytest 43.
+- [x] 라이브 스모크(2026-07-07): `docker compose up` → `migrate`(001~003) → `demo_pg`.
+  - Postgres 영속 확인: issues/comments/commits/events/knowledge 적재 후 독립 psql 쿼리로 검증(재시작 무관 지속).
+  - 실 LLM: **`claude-sonnet-5`**(소유자 지정, opus 아님). 첫 호출 시 코드펜스(```json```)로 폴백 발생 → `dip_platform/workflow/validation.py` 관용 파싱(펜스/프로즈 추출)으로 수정 → 재실행 시 폴백 없이 Triage(확신도 0.90)·Impact 생성·검증 통과.
+  - 런타임 의존성 `greenlet` 누락(신규 Python) 발견 → `pyproject.toml` 명시 추가(SQLAlchemy async 필수).
+
+## 남은 것 (후속)
+- Step 1②/③: 실 Jira([APR-002]) / 실 Git 어댑터 — 현재 수집원은 Fake.
+- API 가 Postgres 에서 조회하도록 배선(`apps/api/main.py` 는 아직 인메모리 `build_and_run`). 영속 계층은 검증됨.
+
 ## 성공 기준 (DoD)
 - [ ] 실 Anthropic 호출로 Triage/Impact 결과가 생성되고 스키마 검증을 통과한다(실패 시 폴백 유지).
 - [ ] 실 Jira 1개 프로젝트에서 이슈/코멘트가 수집되어 Postgres 에 적재된다(멱등).

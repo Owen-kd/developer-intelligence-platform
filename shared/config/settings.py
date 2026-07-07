@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Auth (내부 도구 최소 모델 — 로컬 기본값. 운영은 시크릿 매니저로 주입)
     api_token: str = "dev-token"
 
+    # LLM (infrastructure 계층에서만 사용. 벤더 기본값=Anthropic — APR-005)
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-8"
+    llm_max_tokens: int = 1024
+
     # Postgres
     postgres_host: str = "localhost"
     postgres_port: int = 5432
