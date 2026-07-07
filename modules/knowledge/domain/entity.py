@@ -27,6 +27,10 @@ class IssueSnapshot:
     commit_shas: tuple[str, ...]
     source_event_ids: tuple[str, ...]
     assignee: str = ""  # 담당자(enrich: "누가")
+    reporter: str = ""  # 문의자
+    description: str = ""  # 본문(원천, 2차 LLM 요약용)
+    labels: tuple[str, ...] = ()  # 도메인 태그
+    components: tuple[str, ...] = ()  # 도메인 서가
 
 
 @dataclass(frozen=True)

@@ -30,5 +30,9 @@ class Issue:
     created_at: str
     updated_at: str
     assignee: str = ""
+    reporter: str = ""
+    description: str = ""
+    labels: list[str] = field(default_factory=list)
+    components: list[str] = field(default_factory=list)
     comments: list[Comment] = field(default_factory=list)
     id: str | None = None

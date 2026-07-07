@@ -99,7 +99,10 @@ class PostgresIssueSourceReader(IssueSourceReader):
                 await conn.execute(
                     text(
                         "SELECT id, jira_key, summary, status, priority, "
-                        "COALESCE(assignee, '') AS assignee FROM issues WHERE id = :id"
+                        "COALESCE(assignee, '') AS assignee, "
+                        "COALESCE(reporter, '') AS reporter, "
+                        "COALESCE(description, '') AS description, "
+                        "labels, components FROM issues WHERE id = :id"
                     ),
                     {"id": issue_id},
                 )
@@ -143,6 +146,10 @@ class PostgresIssueSourceReader(IssueSourceReader):
             commit_shas=tuple(row.sha for row in commits),
             source_event_ids=tuple(str(row.id) for row in events),
             assignee=issue.assignee,
+            reporter=issue.reporter,
+            description=issue.description,
+            labels=tuple(issue.labels or ()),
+            components=tuple(issue.components or ()),
         )
 
 

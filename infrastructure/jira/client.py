@@ -36,6 +36,10 @@ class JiraIssue:
     created_at: str
     updated_at: str
     assignee: str = ""  # 담당자 표시명(PII 최소화)
+    reporter: str = ""  # 문의자 표시명
+    description: str = ""  # 본문(ADF→평문, 원천 보존)
+    labels: tuple[str, ...] = ()  # 도메인 태그(glossary급)
+    components: tuple[str, ...] = ()  # 도메인 서가
     comments: tuple[JiraComment, ...] = field(default_factory=tuple)
 
 
@@ -57,6 +61,10 @@ _SAMPLE_ISSUES: tuple[JiraIssue, ...] = (
         created_at="2026-07-01T09:00:00+00:00",
         updated_at="2026-07-02T10:30:00+00:00",
         assignee="민수",
+        reporter="지은",
+        description="피크 시간대 결제 요청이 간헐적으로 타임아웃됨. 재현 조건과 로그 첨부.",
+        labels=("2.0",),
+        components=("결제",),
         comments=(
             JiraComment(
                 external_id="c-101",
@@ -119,8 +127,18 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
         for c in raw_comments
         if isinstance(c, dict)
     )
-    assignee_obj = fields.get("assignee")
-    assignee = str(assignee_obj["displayName"]) if isinstance(assignee_obj, dict) else ""
+    def _display(key: str) -> str:
+        obj = fields.get(key)
+        return str(obj["displayName"]) if isinstance(obj, dict) and obj.get("displayName") else ""
+
+    raw_labels = fields.get("labels")
+    labels = tuple(str(x) for x in raw_labels) if isinstance(raw_labels, list) else ()
+    raw_comps = fields.get("components")
+    components = (
+        tuple(str(c["name"]) for c in raw_comps if isinstance(c, dict) and c.get("name"))
+        if isinstance(raw_comps, list)
+        else ()
+    )
 
     return JiraIssue(
         key=str(raw.get("key", "")),
@@ -130,7 +148,11 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
         summary=str(fields.get("summary", "")),
         created_at=str(fields.get("created", "")),
         updated_at=str(fields.get("updated", "")),
-        assignee=assignee,  # PII 최소화: 표시명만
+        assignee=_display("assignee"),  # PII 최소화: 표시명만
+        reporter=_display("reporter"),
+        description=_adf_to_text(fields.get("description")).strip(),  # 본문(원천 보존)
+        labels=labels,
+        components=components,
         comments=comments,
     )
 
@@ -142,7 +164,10 @@ class HttpJiraClient(JiraClient):
     수집은 bounded(최근 N개) — 전량 증분 동기화는 후속 과제.
     """
 
-    _FIELDS = "summary,status,issuetype,priority,created,updated,assignee,comment"
+    _FIELDS = (
+        "summary,status,issuetype,priority,created,updated,"
+        "assignee,reporter,description,labels,components,comment"
+    )
     _PAGE_SIZE = 100  # /search/jql 페이지 상한
 
     def __init__(

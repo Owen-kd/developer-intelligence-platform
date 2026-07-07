@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import replace
 from datetime import datetime
@@ -64,8 +65,10 @@ class PostgresIssueRepository(IssueRepository):
         query = text(
             """
             INSERT INTO issues
-                (jira_key, type, status, priority, summary, assignee, created_at, updated_at)
-            VALUES (:jira_key, :type, :status, :priority, :summary, :assignee,
+                (jira_key, type, status, priority, summary, assignee, reporter,
+                 description, labels, components, created_at, updated_at)
+            VALUES (:jira_key, :type, :status, :priority, :summary, :assignee, :reporter,
+                    :description, CAST(:labels AS jsonb), CAST(:components AS jsonb),
                     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
             ON CONFLICT (jira_key) DO UPDATE SET
                 type = EXCLUDED.type,
@@ -73,6 +76,10 @@ class PostgresIssueRepository(IssueRepository):
                 priority = EXCLUDED.priority,
                 summary = EXCLUDED.summary,
                 assignee = EXCLUDED.assignee,
+                reporter = EXCLUDED.reporter,
+                description = EXCLUDED.description,
+                labels = EXCLUDED.labels,
+                components = EXCLUDED.components,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = now()
             RETURNING id
@@ -88,6 +95,10 @@ class PostgresIssueRepository(IssueRepository):
                     "priority": issue.priority,
                     "summary": issue.summary,
                     "assignee": issue.assignee,
+                    "reporter": issue.reporter,
+                    "description": issue.description,
+                    "labels": json.dumps(issue.labels),
+                    "components": json.dumps(issue.components),
                     "created_at": _dt(issue.created_at),
                     "updated_at": _dt(issue.updated_at),
                 },
