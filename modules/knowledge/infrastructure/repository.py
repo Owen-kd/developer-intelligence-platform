@@ -52,9 +52,16 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
     async def save(self, knowledge: Knowledge) -> None:
         query = text(
             """
-            INSERT INTO knowledge (id, type, issue_id, summary, body, sources, created_at)
+            INSERT INTO knowledge (id, type, issue_id, summary, body, sources, source, created_at)
             VALUES (:id, :type, :issue_id, :summary,
-                    CAST(:body AS jsonb), CAST(:sources AS jsonb), :created_at)
+                    CAST(:body AS jsonb), CAST(:sources AS jsonb), :source, :created_at)
+            ON CONFLICT (id) DO UPDATE SET
+                type = EXCLUDED.type,
+                issue_id = EXCLUDED.issue_id,
+                summary = EXCLUDED.summary,
+                body = EXCLUDED.body,
+                sources = EXCLUDED.sources,
+                source = EXCLUDED.source
             """
         )
         async with pg.get_engine().begin() as conn:
@@ -63,17 +70,18 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
                 {
                     "id": knowledge.id,
                     "type": knowledge.type,
-                    "issue_id": knowledge.issue_id,
+                    "issue_id": knowledge.issue_id or None,  # 전문가 문서는 이슈 미연결 허용
                     "summary": knowledge.summary,
                     "body": json.dumps(knowledge.body),
                     "sources": json.dumps(list(knowledge.sources)),
+                    "source": knowledge.source,
                     "created_at": knowledge.created_at,
                 },
             )
 
     async def list_by_issue(self, issue_id: str) -> list[Knowledge]:
         query = text(
-            "SELECT id, type, issue_id, summary, body, sources, created_at "
+            "SELECT id, type, issue_id, summary, body, sources, source, created_at "
             "FROM knowledge WHERE issue_id = :iid ORDER BY created_at"
         )
         async with pg.get_engine().connect() as conn:
@@ -82,7 +90,7 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
 
     async def get(self, knowledge_id: str) -> Knowledge | None:
         query = text(
-            "SELECT id, type, issue_id, summary, body, sources, created_at "
+            "SELECT id, type, issue_id, summary, body, sources, source, created_at "
             "FROM knowledge WHERE id = :id"
         )
         async with pg.get_engine().connect() as conn:
@@ -158,9 +166,10 @@ def _row_to_knowledge(row: object) -> Knowledge:
     return Knowledge(
         id=str(row.id),  # type: ignore[attr-defined]
         type=row.type,  # type: ignore[attr-defined]
-        issue_id=str(row.issue_id),  # type: ignore[attr-defined]
+        issue_id=str(row.issue_id) if row.issue_id else "",  # type: ignore[attr-defined]
         summary=row.summary,  # type: ignore[attr-defined]
         body=row.body,  # type: ignore[attr-defined]
         sources=tuple(row.sources),  # type: ignore[attr-defined]
         created_at=row.created_at,  # type: ignore[attr-defined]
+        source=row.source,  # type: ignore[attr-defined]
     )

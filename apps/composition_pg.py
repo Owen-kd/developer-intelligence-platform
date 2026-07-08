@@ -31,6 +31,7 @@ from infrastructure.git.client import (
     MultiRepoGitClient,
 )
 from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
+from infrastructure.knowledgedocs.reader import read_docs
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres.event_store import PostgresEventStore
 from modules.git.application.service import GitService
@@ -47,6 +48,7 @@ from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
 from modules.knowledge.application.recorder import AgentKnowledgeRecorder
 from modules.knowledge.application.service import PromotionService
+from modules.knowledge.domain.entity import Knowledge
 from modules.knowledge.domain.repository import KnowledgeRepository
 from modules.knowledge.infrastructure.context_source import KnowledgeRepositorySource
 from modules.knowledge.infrastructure.repository import (
@@ -178,6 +180,32 @@ async def build_and_run_pg() -> DipPostgresApp:
     )
 
 
+async def ingest_knowledge_docs(directory: str = "knowledge") -> int:
+    """`knowledge/*.md`(전문가 작성)를 verified Knowledge 로 흡수한다(멱등).
+
+    자동 추출(derived)과 달리 신뢰등급 'verified' — 검색/답변 시 우선한다.
+    """
+    repo = PostgresKnowledgeRepository()
+    docs = read_docs(directory)
+    for doc in docs:
+        await repo.save(
+            Knowledge(
+                id=doc.doc_id,
+                type=doc.type,
+                issue_id="",  # 전문가 문서는 특정 이슈에 매이지 않음
+                summary=doc.title,
+                body={
+                    "content": doc.content,
+                    "code_refs": doc.code_refs,
+                    "issues": list(doc.issues),
+                },
+                sources=(f"doc:{doc.filename}",),
+                source="verified",
+            )
+        )
+    return len(docs)
+
+
 @dataclass
 class CollectResult:
     """수집+정제 1회 결과 요약 (LLM 미사용)."""
@@ -189,6 +217,7 @@ class CollectResult:
     commits_synced: int
     links_created: int  # 이슈↔커밋 신규 링크 수
     refined: int  # 이번에 정제(issue_summary 승격)한 신규 이슈 수
+    verified_docs: int  # 흡수한 전문가 문서 수
     total_in_db: int
 
 
@@ -230,6 +259,8 @@ async def collect_and_refine() -> CollectResult:
     for issue_id in new_ids:
         await promotion.promote_issue(issue_id)  # 원천 → Knowledge(issue_summary), LLM 없음
 
+    verified_docs = await ingest_knowledge_docs()  # 전문가 문서(knowledge/*.md) 흡수
+
     total = len(await issue_repo.list_issues())
     return CollectResult(
         jira_mode=jira_mode,
@@ -239,5 +270,6 @@ async def collect_and_refine() -> CollectResult:
         commits_synced=git_sync.commits_synced,
         links_created=git_sync.links_created,
         refined=len(new_ids),
+        verified_docs=verified_docs,
         total_in_db=total,
     )

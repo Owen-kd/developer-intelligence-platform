@@ -44,3 +44,4 @@ class Knowledge:
     body: dict[str, object]
     sources: tuple[str, ...]
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    source: str = "derived"  # 신뢰등급: 'verified'(전문가) / 'derived'(자동)

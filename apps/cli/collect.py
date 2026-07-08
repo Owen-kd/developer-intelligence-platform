@@ -31,6 +31,7 @@ async def _main() -> None:
             commits_synced=result.commits_synced,
             links_created=result.links_created,
             refined=result.refined,
+            verified_docs=result.verified_docs,
             total_in_db=result.total_in_db,
         )
     finally:
