@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from shared.utils.scrub import scrub_text
+
 
 @dataclass(frozen=True)
 class JiraComment:
@@ -121,7 +123,7 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
             external_id=str(c.get("id", "")),
             # PII 최소화: 작성자는 표시명만 저장(이메일/계정ID 미저장) — APR-002
             author=str((c.get("author") or {}).get("displayName", "unknown")),
-            body=_adf_to_text(c.get("body")).strip(),
+            body=scrub_text(_adf_to_text(c.get("body")).strip()),  # PII/시크릿 제거
             created_at=str(c.get("created", "")),
         )
         for c in raw_comments
@@ -150,7 +152,7 @@ def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
         updated_at=str(fields.get("updated", "")),
         assignee=_display("assignee"),  # PII 최소화: 표시명만
         reporter=_display("reporter"),
-        description=_adf_to_text(fields.get("description")).strip(),  # 본문(원천 보존)
+        description=scrub_text(_adf_to_text(fields.get("description")).strip()),  # PII/시크릿 제거
         labels=labels,
         components=components,
         comments=comments,
