@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 = PostgreSQL 16 + vector 확장 (ADR-009). 명명 볼륨 유지로 데이터 보존.
+    image: pgvector/pgvector:pg16
     container_name: dip-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dip}

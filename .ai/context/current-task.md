@@ -20,7 +20,29 @@
 **[Sprint-14](../tasks/Sprint-14.md) 진행 중** — 실 어댑터 연동(LLM/Jira/Git) + Postgres 배선.
 - [x] ① 실 Anthropic 어댑터([ADR-006](../decisions/ADR-006-anthropic-adapter.md)) + Postgres 배선([`apps/composition_pg`](../../apps/composition_pg.py)) — **라이브 검증 완료**(실 `claude-sonnet-5`, Postgres 영속). 승인 [APR-003](../planning/approvals/APR-003-dependencies.md)/[APR-005](../planning/approvals/APR-005-llm-vendor-data.md) 소유자 승인.
   - 부수 수정: `greenlet` 의존성 명시, `validation.py` 코드펜스 관용 파싱.
-- [ ] ② 실 Jira([APR-002](../planning/approvals/APR-002-jira-access-pii.md) 승인 필요) → [ ] ③ 실 Git → [ ] API 를 Postgres 조회로 배선.
+- [x] ② 실 Jira 수집 **실제 동작 확인** — `.env` 설정됨(HttpJiraClient) → DB에 **실 이슈 5000건(PA20 3000+ENG 2000) + 코멘트 29,002건 + 수집이벤트(IssueCreated 5000)** 적재됨. ⚠️ 단 [APR-002](../planning/approvals/APR-002-jira-access-pii.md) 거버넌스 승인은 여전히 Pending(공식 게이트).
+- [x] ③ 실 Git 수집 동작 확인 — 커밋 6,054건 + 이슈↔커밋 링크 631건.
+- [ ] 미완(자동화): **주기 스케줄러**(지금은 수동 트리거) · API를 Postgres 조회로 배선 · 이벤트 기반 자동 지식화. → 24시간 상시 서비스는 [target-service](../planning/target-service.md) 참조.
+> 정정(2026-07-08): 이전 문구 "수집원은 아직 Fake"는 **런타임 실제 상태와 모순된 낡은 서술**이었음. Fake는 미설정 시 폴백일 뿐, 현 환경은 실 수집됨(위 증거). 남은 건 "가짜냐"가 아니라 "자동 주기화·거버넌스 승인".
+
+## 지식 위키 RAG (Sprint-07 착수, 오너 지시 2026-07-08)
+**목표**: 이슈 → LLM 위키 → 로컬 임베딩 → pgvector → RAG 유사검색. 사용자 비전 덱 "AI DevOps Platform"의 첫 조각.
+- [x] 기반 배선 완료 — [ADR-009](../decisions/ADR-009-local-embedding-pgvector.md)(fastembed 로컬임베딩 + pgvector), [APR-004](../planning/approvals/APR-004-vector-store.md) pgvector 승인.
+  - `infrastructure/embedding/`(Embedder 포트 + FastEmbed/Fake), `009_embeddings.sql`(knowledge.embedding vector(1024) + HNSW),
+    `modules/knowledge/application/wiki_service.py`(+`prompts/knowledge/wiki.md`, `ask.md`), `apps/wiki_pipeline.py` + `apps/cli/wiki.py`.
+  - 검증: ruff/mypy strict(193)/pytest(64) 통과 + **라이브 pgvector 스모크 통과**(build→embed→cosine top-k, 최상위=PA20-19864).
+  - docker: postgres 이미지 → `pgvector/pgvector:pg16`(명명 볼륨 유지, 5000건 보존). `fastembed` 의존성 추가.
+- [x] MCP 의미검색 배선 — `apps/mcp/server.py` 에 `search_wiki`(벡터 RAG) 도구 추가(+`queries.search_wiki_by_vector`). 로컬 e5 지연로딩. **라이브 확인**(질의 "쿠팡 옵션 수정 안돼요"→PA20-19875 0.83).
+  - 파일럿에서 버그 수정: 위키 LLM `max_tokens` 4096(잘림 방지), `build_wikis` 이슈별 실패 격리(배치 중단 방지), mypy numpy 스텁 skip override.
+- [x] 상품 도메인 위키 30건 sonnet 실 생성·임베딩 완료(실패 0). **RAG 라이브 검증**: "쿠팡 옵션 수정 안됨" → PA20-19864 0.90 최상위. 품질 양호(근본원인 정직 표기).
+  - fastembed `xet` 캐시 권한 크래시 → `HF_HUB_DISABLE_XET=1` 을 embedding 어댑터에서 기본 설정(방어).
+- [x] **24시간 4루프 backbone 배선 완료** → [target-service](../planning/target-service.md).
+  - 루프2 자동화: `WikiAutoGenerator`(IssueCreated→자동 위키·임베딩). 루프3-Pull: `POST /ask`([apps/api/routers/ask.py](../../apps/api/routers/ask.py)) + gap 로그(`query_gaps`, 010). 루프3-Push: `RelatedKnowledgePush`(유사 위키 내부 연결, `issue_related_wiki` 011, 라이브 검증 PA20-19864→3건). 
+  - 브로커: `RedisEventBus`([ADR-011](../decisions/ADR-011-redis-event-bus.md), Streams+group). 상시 진입점 `apps/worker/run` · `apps/scheduler/run`(기본 OFF, APR-002 게이트).
+  - e2e 라이브: 발행→실 Redis→소비→루프2 생성 검증. 게이트 그린(ruff/mypy 201/pytest 72).
+  - 미완(게이트): 실 자동수집 활성화(APR-002), Push 실 Jira 코멘트 쓰기 승인, 되먹임(gap) 활용.
+- [ ] 나머지 375건(상품 도메인 총 405건) + 타 도메인 생성 대기. `ANTHROPIC_MODEL=claude-sonnet-5 python -m apps.cli.wiki build`.
+- [ ] 후속: 백엔드 도메인 지식(`gmp.openapi.2023/.ai/domains/product/`) → DIP `knowledge/` 흡수로 근본원인 grounding 강화 · 전문가 검증 루프(verified 승격) · 전량 자동수집(스케줄러, APR-002) · 접근제어([ADR-010]/[APR-010]).
 
 ## 다른 기계에서 이어가기 (Resume anywhere)
 1. `git clone <origin>` → 브랜치 `feature/dip-full-build` 체크아웃.
@@ -44,6 +66,7 @@
 
 ## 제안된 결정 (승인 대기)
 - ADR-004(제안): "AI는 Knowledge만 소비한다"를 불변 규칙으로 승격 — [APR-001](../planning/approvals/APR-001-adr004-knowledge-only.md) · [../architecture/knowledge-lifecycle.md](../architecture/knowledge-lifecycle.md) 하단 참조.
+- [ADR-010](../decisions/ADR-010-team-shelf-access-control.md)(제안): 팀별 서가(component) 열람 권한·접근제어 — 기본 deny + 단일 시행계층 + 감사. 승인 [APR-010](../planning/approvals/APR-010-access-control.md) 대기. 보안 크리티컬(내부정보 유출·격리 대비).
 
 ## 메모
 - 로컬 Python은 시스템 3.9 → 3.11+ 필요. venv는 Homebrew python3.14로 생성됨.

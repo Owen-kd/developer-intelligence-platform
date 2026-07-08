@@ -3,7 +3,8 @@
 인메모리 [composition.py](composition.py) 와 같은 파이프라인을 **영속 어댑터**로 조립한다:
 - 저장소: Postgres(issues/comments/commits/knowledge/events) — 재시작해도 데이터 유지.
 - LLM: `ANTHROPIC_API_KEY` 가 있으면 실 `AnthropicClient`, 없으면 결정적 `FakeLLMClient`([ADR-006]).
-- 수집원(Jira/Git)은 아직 Fake — 실 어댑터는 Sprint-14 ②/③([APR-002]).
+- 수집원(Jira/Git): `.env` 설정이 있으면 실 어댑터(HttpJiraClient/LocalGitClient), 없으면 Fake 폴백.
+  현 환경은 설정됨 → 실 수집 동작(거버넌스 승인 [APR-002] 는 별개로 Pending).
 - 그래프/인시던트는 in-memory 유지(Neo4j·인시던트 테이블은 Sprint-14 non-goal).
 
 포트 뒤 어댑터만 교체하므로 platform/modules 코드는 변경되지 않는다(포트-어댑터).

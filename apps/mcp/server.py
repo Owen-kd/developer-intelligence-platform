@@ -12,11 +12,25 @@ Claude Desktop 연결: README/응답의 설정 JSON 참고.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from mcp.server.fastmcp import FastMCP
 
 from apps.mcp import queries
+from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
+from shared.config.settings import get_settings
 
 mcp = FastMCP("dip-knowledge-library")
+
+
+@lru_cache
+def _get_embedder() -> Embedder:
+    """로컬 임베더(fastembed)를 최초 의미검색 시 1회 로딩한다(모델 다운로드/캐시).
+
+    LLM 이 아니라 로컬 임베딩 모델이다 — 외부 전송 0, 서버의 'LLM 0' 원칙과 상충하지 않는다.
+    """
+    settings = get_settings()
+    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
 
 
 @mcp.tool()
@@ -36,6 +50,17 @@ async def get_expert_knowledge(query: str = "", limit: int = 5) -> str:
     예: query="요금 과충전" / "교환주문 플래그". query 비우면 전체 목록.
     """
     return await queries.expert_knowledge(query, limit)
+
+
+@mcp.tool()
+async def search_wiki(query: str, limit: int = 5) -> str:
+    """자연어 질문으로 의미가 유사한 위키(자동 생성 지식)를 검색한다 — 벡터 RAG.
+
+    키워드 일치가 아니라 의미 유사도 기반이라, 표현이 달라도 찾는다.
+    예: query="쿠팡에서 옵션이 수정이 안돼요" → 관련 위키를 증상·근본원인·해결과 함께 반환.
+    """
+    embedding = await _get_embedder().embed_query(query)
+    return await queries.search_wiki_by_vector(embedding, limit)
 
 
 @mcp.tool()

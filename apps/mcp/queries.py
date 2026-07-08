@@ -9,6 +9,8 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from infrastructure.postgres import connection as pg
+from modules.knowledge.application.wiki_service import WIKI_TYPE
+from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 
 
 def _patterns(query: str) -> list[str]:
@@ -117,6 +119,35 @@ async def issue_detail(jira_key: str) -> str:
     for c in commits:
         out.append(f"- `{c.sha[:10]}` {c.author}: {c.message.splitlines()[0][:70]}")
     return "\n".join(out)
+
+
+async def search_wiki_by_vector(embedding: list[float], limit: int = 5) -> str:
+    """질의 임베딩과 의미가 유사한 위키를 top-k 로 반환한다(벡터 RAG, 키워드 아님).
+
+    임베딩 생성은 호출자(서버)의 로컬 임베더 책임 — 이 함수는 검색·조립만 한다(생성/모델 없음).
+    """
+    repo = PostgresKnowledgeRepository()
+    hits = await repo.search_semantic(embedding, limit=limit, types=(WIKI_TYPE,))
+    if not hits:
+        return (
+            "관련 위키가 없습니다. (아직 위키 미생성일 수 있음 — "
+            "`python -m apps.cli.wiki build` 로 생성)"
+        )
+    lines = [f"# 의미검색: 유사 위키 {len(hits)}건\n"]
+    for knowledge, score in hits:
+        body = knowledge.body if isinstance(knowledge.body, dict) else {}
+        jira = next(
+            (s.removeprefix("issue:") for s in knowledge.sources if s.startswith("issue:")),
+            "-",
+        )
+        lines.append(
+            f"## [{score:.2f}] {knowledge.summary} · {jira}\n"
+            f"- 증상: {str(body.get('symptom', ''))[:160]}\n"
+            f"- 근본원인: {str(body.get('root_cause', ''))[:240]}\n"
+            f"- 해결: {str(body.get('resolution', ''))[:160]}\n"
+            f"- 코드참조: {body.get('code_refs') or '-'}\n"
+        )
+    return "\n".join(lines)
 
 
 async def list_shelves(limit: int = 25) -> str:

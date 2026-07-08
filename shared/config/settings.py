@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-4-8"
     llm_max_tokens: int = 1024
 
+    # Embedding (로컬, infrastructure/embedding 에서만 사용 — ADR-009)
+    # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.
+    embedding_model: str = "intfloat/multilingual-e5-large"
+    embedding_dim: int = 1024
+
     # Jira (infrastructure 계층에서만 사용. 읽기 전용 — APR-002)
     jira_base_url: str = ""
     jira_email: str = ""
@@ -56,6 +61,13 @@ class Settings(BaseSettings):
     postgres_user: str = "dip"
     postgres_password: str = "dip"
     postgres_db: str = "dip"
+
+    # Redis (이벤트 브로커 — infrastructure/redis, ADR-011)
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Scheduler (주기 수집 — apps/scheduler). 기본 비활성(오발 방지). 실 대량수집은 APR-002 승인 후.
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: int = 300
 
     @property
     def postgres_dsn(self) -> str:

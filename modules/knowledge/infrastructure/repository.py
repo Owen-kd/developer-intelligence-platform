@@ -97,6 +97,68 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             row = (await conn.execute(query, {"id": knowledge_id})).first()
         return _row_to_knowledge(row) if row is not None else None
 
+    async def save_embedding(self, knowledge_id: str, embedding: list[float]) -> None:
+        """지식 행에 벡터 임베딩을 채운다(pgvector) — ADR-009."""
+        query = text(
+            "UPDATE knowledge SET embedding = CAST(:emb AS vector) WHERE id = :id"
+        )
+        async with pg.get_engine().begin() as conn:
+            await conn.execute(query, {"id": knowledge_id, "emb": _vector_literal(embedding)})
+
+    async def link_related_wiki(self, issue_id: str, wiki_id: str, score: float) -> None:
+        """이슈에 유사 위키를 관련지식으로 연결한다(멱등) — 루프3-Push."""
+        query = text(
+            """
+            INSERT INTO issue_related_wiki (issue_id, wiki_id, score)
+            VALUES (:iid, :wid, :score)
+            ON CONFLICT (issue_id, wiki_id) DO UPDATE SET score = EXCLUDED.score
+            """
+        )
+        async with pg.get_engine().begin() as conn:
+            await conn.execute(query, {"iid": issue_id, "wid": wiki_id, "score": score})
+
+    async def list_related_wikis(self, issue_id: str) -> list[tuple[Knowledge, float]]:
+        """이슈에 연결된 관련 위키를 유사도 내림차순으로 조회한다."""
+        query = text(
+            """
+            SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
+                   k.created_at, r.score
+            FROM issue_related_wiki r JOIN knowledge k ON k.id = r.wiki_id
+            WHERE r.issue_id = :iid ORDER BY r.score DESC
+            """
+        )
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query, {"iid": issue_id})).all()
+        return [(_row_to_knowledge(row), float(row.score)) for row in rows]
+
+    async def search_semantic(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        types: tuple[str, ...] = (),
+    ) -> list[tuple[Knowledge, float]]:
+        """질의 임베딩과 코사인 유사한 지식을 top-k 로 반환한다(유사도 내림차순).
+
+        `types` 가 주어지면 해당 type 만 검색한다(예: ('wiki',)). 미임베딩 행은 제외된다.
+        """
+        type_cond = "AND type = ANY(:types)" if types else ""
+        query = text(
+            f"""
+            SELECT id, type, issue_id, summary, body, sources, source, created_at,
+                   1 - (embedding <=> CAST(:q AS vector)) AS score
+            FROM knowledge
+            WHERE embedding IS NOT NULL {type_cond}
+            ORDER BY embedding <=> CAST(:q AS vector)
+            LIMIT :lim
+            """
+        )
+        params: dict[str, object] = {"q": _vector_literal(embedding), "lim": limit}
+        if types:
+            params["types"] = list(types)
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query, params)).all()
+        return [(_row_to_knowledge(row), float(row.score)) for row in rows]
+
 
 class PostgresIssueSourceReader(IssueSourceReader):
     """issues/comments/commits/events 를 조인해 스냅샷을 조립한다."""
@@ -159,6 +221,11 @@ class PostgresIssueSourceReader(IssueSourceReader):
             labels=tuple(issue.labels or ()),
             components=tuple(issue.components or ()),
         )
+
+
+def _vector_literal(embedding: list[float]) -> str:
+    """float 리스트를 pgvector 텍스트 리터럴 '[v1,v2,...]' 로 만든다(CAST ... AS vector 용)."""
+    return "[" + ",".join(repr(float(value)) for value in embedding) + "]"
 
 
 def _row_to_knowledge(row: object) -> Knowledge:
