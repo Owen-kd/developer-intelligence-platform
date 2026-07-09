@@ -89,17 +89,41 @@ class RedisEventBus(EventBus):
             if "BUSYGROUP" not in str(exc):
                 raise
 
-    async def consume_once(self, *, block_ms: int = 5000, count: int = 10) -> int:
-        """스트림에서 한 배치를 읽어 로컬 핸들러에 디스패치·ack. 처리한 이벤트 수 반환."""
+    async def consume_once(
+        self, *, block_ms: int = 5000, count: int = 10, min_idle_ms: int = 60_000
+    ) -> int:
+        """스트림에서 한 배치를 처리한다(처리 수 반환).
+
+        - 먼저 오래 미확인(pending)된 고아 메시지를 XAUTOCLAIM 으로 재청구·재처리한다
+          (dispatch~ack 사이 크래시/재배포로 유실되지 않도록).
+        - `_dispatch` 가 True(처리 성공/포이즌 드롭)일 때만 ack 한다. 핸들러가 실패하면
+          ack 하지 않아 다음 사이클에 재전달된다(at-least-once; 핸들러는 멱등 전제).
+        """
+        processed = 0
+
+        # 1) 고아 pending 재청구 (min_idle 초과분) — 신규만 읽는 '>' 의 사각을 보완
+        try:
+            claimed = await self._redis.xautoclaim(
+                self._stream, self._group, self._consumer, min_idle_ms, start_id="0", count=count
+            )
+            messages = claimed[1] if isinstance(claimed, (list, tuple)) and len(claimed) > 1 else []
+        except Exception as exc:  # xautoclaim 미지원/일시 오류는 신규 처리까지 막지 않는다
+            _logger.warning("consume.reclaim_failed", error=str(exc))
+            messages = []
+        for message_id, fields in messages or []:
+            if fields and await self._dispatch(fields):
+                await self._redis.xack(self._stream, self._group, message_id)
+                processed += 1
+
+        # 2) 신규 메시지
         response = await self._redis.xreadgroup(
             self._group, self._consumer, {self._stream: ">"}, count=count, block=block_ms
         )
-        processed = 0
-        for _stream_name, messages in response or []:
-            for message_id, fields in messages:
-                await self._dispatch(fields)
-                await self._redis.xack(self._stream, self._group, message_id)
-                processed += 1
+        for _stream_name, new_messages in response or []:
+            for message_id, fields in new_messages:
+                if await self._dispatch(fields):
+                    await self._redis.xack(self._stream, self._group, message_id)
+                    processed += 1
         return processed
 
     async def run(self) -> None:
@@ -112,17 +136,30 @@ class RedisEventBus(EventBus):
     async def aclose(self) -> None:
         await self._redis.aclose()
 
-    async def _dispatch(self, fields: dict[str, str]) -> None:
-        name = fields.get("name", "")
-        payload_dict = json.loads(fields.get("payload", "{}"))
-        event = Event(
-            name=name,
-            payload=_DictPayload(**payload_dict),
-            event_id=fields.get("event_id", ""),
-            occurred_at=_parse_dt(fields.get("occurred_at")),
-        )
+    async def _dispatch(self, fields: dict[str, str]) -> bool:
+        """메시지를 로컬 핸들러에 격리 디스패치. ack 해도 되는지(bool) 반환.
+
+        - 파싱 불가(포이즌) 메시지는 로그 후 True(=ack, 드롭) — 재전달 크래시-루프 방지.
+        - 핸들러가 하나라도 실패하면 False(=ack 안 함) — 재전달로 재시도(멱등 전제).
+        """
+        try:
+            name = fields.get("name", "")
+            payload_dict = json.loads(fields.get("payload", "{}"))
+            event = Event(
+                name=name,
+                payload=_DictPayload(**payload_dict),
+                event_id=fields.get("event_id", ""),
+                occurred_at=_parse_dt(fields.get("occurred_at")),
+            )
+        except Exception as exc:  # 포이즌 메시지 → 드롭(ack) 하되 유실을 기록
+            _logger.error("event.parse_failed", error=str(exc), raw=str(fields)[:200])
+            return True
+
+        all_ok = True
         for handler in list(self._handlers.get(name, ())):
             try:
                 await handler(event)  # 격리: 한 핸들러 실패가 다른 핸들러를 막지 않는다
             except Exception as exc:
+                all_ok = False  # 미ack → 재전달로 재시도
                 _logger.error("event.handler_failed", name=name, error=str(exc))
+        return all_ok

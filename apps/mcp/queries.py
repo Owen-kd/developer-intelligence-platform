@@ -140,7 +140,8 @@ async def issue_detail(jira_key: str, shelf_patterns: tuple[str, ...] = ()) -> s
         f"\n## 링크된 커밋 {len(commits)}건",
     ]
     for c in commits:
-        out.append(f"- `{c.sha[:10]}` {c.author}: {c.message.splitlines()[0][:70]}")
+        first_line = (c.message.splitlines() or [""])[0]  # 빈 커밋 메시지 방어(IndexError)
+        out.append(f"- `{c.sha[:10]}` {c.author}: {first_line[:70]}")
     return "\n".join(out)
 
 
