@@ -49,8 +49,12 @@ class JiraClient(ABC):
     """Jira 읽기 전용 포트. 구현은 외부 호출을 캡슐화한다."""
 
     @abstractmethod
-    async def fetch_issues(self) -> list[JiraIssue]:
-        """수집 대상 이슈(코멘트 포함)를 가져온다."""
+    async def fetch_issues(self, updated_since: str | None = None) -> list[JiraIssue]:
+        """수집 대상 이슈(코멘트 포함)를 가져온다.
+
+        `updated_since`(JQL datetime, 예 '2026-07-08 02:00')가 있으면 그 이후 변경분만
+        오래된 순으로 가져온다(증분 수집). 없으면 최신 순 bounded 수집.
+        """
 
 
 _SAMPLE_ISSUES: tuple[JiraIssue, ...] = (
@@ -91,8 +95,8 @@ class FakeJiraClient(JiraClient):
     def __init__(self, issues: list[JiraIssue] | None = None) -> None:
         self._issues = list(issues) if issues is not None else list(_SAMPLE_ISSUES)
 
-    async def fetch_issues(self) -> list[JiraIssue]:
-        return list(self._issues)
+    async def fetch_issues(self, updated_since: str | None = None) -> list[JiraIssue]:
+        return list(self._issues)  # fixture 는 증분 무시
 
 
 def _adf_to_text(node: object) -> str:
@@ -184,17 +188,27 @@ class HttpJiraClient(JiraClient):
             raise ValueError("Jira 설정이 비어 있습니다 (.env JIRA_*).")
         self._base = base_url.rstrip("/")
         self._auth = httpx.BasicAuth(email, api_token)
-        self._jql = f"project={project_key} ORDER BY created DESC"
+        self._project_key = project_key
         self._max = max_issues
 
-    async def fetch_issues(self) -> list[JiraIssue]:
+    def _build_jql(self, updated_since: str | None) -> str:
+        """증분(updated_since)이면 그 이후 변경분을 오래된 순으로, 아니면 최신 순."""
+        if updated_since:
+            return (
+                f'project={self._project_key} AND updated >= "{updated_since}" '
+                "ORDER BY updated ASC"
+            )
+        return f"project={self._project_key} ORDER BY created DESC"
+
+    async def fetch_issues(self, updated_since: str | None = None) -> list[JiraIssue]:
         """max_issues 에 도달하거나 마지막 페이지까지 nextPageToken 으로 순회한다."""
+        jql = self._build_jql(updated_since)
         collected: list[JiraIssue] = []
         token: str | None = None
         async with httpx.AsyncClient(auth=self._auth, timeout=30.0) as client:
             while len(collected) < self._max:
                 params: dict[str, str | int] = {
-                    "jql": self._jql,
+                    "jql": jql,
                     "maxResults": min(self._PAGE_SIZE, self._max - len(collected)),
                     "fields": self._FIELDS,
                 }

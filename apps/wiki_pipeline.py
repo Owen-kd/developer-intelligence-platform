@@ -159,16 +159,26 @@ class AskResult:
     hits: list[tuple[Knowledge, float]]  # (위키, 유사도) 내림차순
 
 
-async def _product_issue_ids(keywords: tuple[str, ...]) -> list[str]:
-    """components(서가)에 키워드가 포함된 이슈 id 를 반환한다(상품 도메인 필터)."""
+async def _product_issue_ids(
+    keywords: tuple[str, ...], only_missing: bool = False
+) -> list[str]:
+    """components(서가)에 키워드가 포함된 이슈 id 를 반환한다(상품 도메인 필터).
+
+    `only_missing` 이면 아직 위키가 없는 이슈만(백필 대상).
+    """
     patterns = [f"%{keyword}%" for keyword in keywords]
+    missing_cond = (
+        "AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE k.type='wiki' AND k.issue_id = i.id)"
+        if only_missing
+        else ""
+    )
     query = text(
-        """
+        f"""
         SELECT i.id::text AS id FROM issues i
         WHERE EXISTS (
             SELECT 1 FROM jsonb_array_elements_text(i.components) c
             WHERE c ILIKE ANY(:pats)
-        )
+        ) {missing_cond}
         ORDER BY i.updated_at DESC
         """
     )
@@ -212,10 +222,14 @@ async def build_wikis(
     *,
     keywords: tuple[str, ...] = PRODUCT_KEYWORDS,
     limit: int | None = None,
+    only_missing: bool = False,
     embedder: Embedder | None = None,
     llm: LLMClient | None = None,
 ) -> BuildResult:
-    """도메인 이슈들을 위키로 생성·임베딩·적재한다(멱등)."""
+    """도메인 이슈들을 위키로 생성·임베딩·적재한다(멱등).
+
+    `only_missing` 이면 아직 위키가 없는 이슈만 대상(backlog 백필). `limit` 로 배치 크기 제한.
+    """
     settings = get_settings()
     if llm is not None:
         llm_mode = "injected"
@@ -226,7 +240,7 @@ async def build_wikis(
     knowledge_repo = PostgresKnowledgeRepository()
     service = WikiGenerationService(llm, FilePromptRegistry(), knowledge_repo)
 
-    issue_ids = await _product_issue_ids(keywords)
+    issue_ids = await _product_issue_ids(keywords, only_missing=only_missing)
     if limit is not None:
         issue_ids = issue_ids[:limit]
 

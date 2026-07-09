@@ -66,8 +66,8 @@ class JiraService:
         self._repo = repo
         self._bus = bus
 
-    async def sync(self) -> SyncResult:
-        raw_issues = await self._client.fetch_issues()
+    async def sync(self, updated_since: str | None = None) -> SyncResult:
+        raw_issues = await self._client.fetch_issues(updated_since)
         issues_created = 0
         comments_added = 0
 

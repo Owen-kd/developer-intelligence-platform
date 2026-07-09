@@ -2,6 +2,7 @@
 
 사용:
     python -m apps.cli.wiki build [--limit N]     # 상품 도메인 이슈 → 위키 생성·임베딩
+    python -m apps.cli.wiki backfill [--limit N]  # 아직 위키 없는 이슈만 배치 생성(backlog)
     python -m apps.cli.wiki ask "쿠팡 옵션 수정 안됨"   # RAG 유사 위키 검색·답변
     python -m apps.cli.wiki gaps                    # 되먹임: 답 못한 질문 + 위키화 후보
 
@@ -22,6 +23,14 @@ async def _build(limit: int | None) -> None:
     result = await build_wikis(limit=limit)
     print(
         f"[build] llm={result.llm_mode} · 후보 {result.candidates} · "
+        f"생성 {result.wikis_built} · 인덱스만 {result.index_only} · 실패 {result.failed}"
+    )
+
+
+async def _backfill(limit: int) -> None:
+    result = await build_wikis(only_missing=True, limit=limit)
+    print(
+        f"[backfill] llm={result.llm_mode} · 대상 {result.candidates} · "
         f"생성 {result.wikis_built} · 인덱스만 {result.index_only} · 실패 {result.failed}"
     )
 
@@ -56,7 +65,10 @@ async def _gaps() -> None:
 
 async def _main(argv: list[str]) -> int:
     if not argv:
-        print("사용법: wiki build [--limit N] | wiki ask \"질문\" | wiki gaps", file=sys.stderr)
+        print(
+            "사용법: wiki build|backfill [--limit N] | wiki ask \"질문\" | wiki gaps",
+            file=sys.stderr,
+        )
         return 2
     command = argv[0]
     try:
@@ -65,6 +77,9 @@ async def _main(argv: list[str]) -> int:
             if "--limit" in argv:
                 limit = int(argv[argv.index("--limit") + 1])
             await _build(limit)
+        elif command == "backfill":
+            limit = int(argv[argv.index("--limit") + 1]) if "--limit" in argv else 30
+            await _backfill(limit)
         elif command == "ask":
             if len(argv) < 2:
                 print("질문을 입력하세요.", file=sys.stderr)

@@ -12,6 +12,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
+
+from sqlalchemy import text
 
 from apps.wiki_pipeline import _build_jira_client
 from dip_platform.event import EventBus
@@ -26,18 +29,34 @@ from shared.logger import get_logger
 
 _logger = get_logger("apps.scheduler")
 
+_CURSOR_BUFFER_MIN = 2  # 경계 누락 방지 겹침(멱등 upsert 가 중복 흡수)
+
+
+async def jira_cursor() -> str | None:
+    """마지막 수집 이후 변경분만 집기 위한 JQL 커서(issues.updated_at 최대값 − 버퍼).
+
+    비어 있으면(최초) None → 최신 순 bounded 전체 수집.
+    """
+    async with pg.get_engine().connect() as conn:
+        row = (await conn.execute(text("SELECT max(updated_at) AS m FROM issues"))).first()
+    if row is None or row.m is None:
+        return None
+    cursor = row.m - timedelta(minutes=_CURSOR_BUFFER_MIN)
+    return str(cursor.strftime("%Y-%m-%d %H:%M"))
+
 
 async def run_once(
     bus: EventBus,
     *,
     jira_client: object | None = None,
     issue_repo: IssueRepository | None = None,
+    updated_since: str | None = None,
 ) -> SyncResult:
     """1회 Jira 수집 → 신규 이슈 IssueCreated 발행. (테스트는 어댑터를 주입)."""
     settings = get_settings()
     repo = issue_repo or PostgresIssueRepository()
     client = jira_client or _build_jira_client(settings)[0]
-    return await JiraService(client, repo, bus).sync()  # type: ignore[arg-type]
+    return await JiraService(client, repo, bus).sync(updated_since)  # type: ignore[arg-type]
 
 
 async def _main() -> None:
@@ -53,9 +72,11 @@ async def _main() -> None:
     _logger.info("scheduler.starting", interval_s=settings.scheduler_interval_seconds)
     try:
         while True:
-            result = await run_once(bus)
+            since = await jira_cursor()  # 증분: 마지막 수집 이후 변경분만
+            result = await run_once(bus, updated_since=since)
             _logger.info(
                 "scheduler.synced",
+                since=since or "(full)",
                 issues=result.issues_synced,
                 created=result.issues_created,
             )
