@@ -16,7 +16,7 @@ from apps.api.dependencies.auth import require_principal
 from apps.wiki_pipeline import ask as run_ask
 from apps.wiki_pipeline import load_gap_records
 from dip_platform.access import allowed_patterns, load_policies
-from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
+from infrastructure.embedding.client import Embedder, get_embedder
 from modules.knowledge.application.gap_analysis import aggregate_gaps
 from shared.config.settings import get_settings
 from shared.logger import get_logger
@@ -30,10 +30,8 @@ router = APIRouter(
 )
 
 
-@lru_cache
 def _embedder() -> Embedder:
-    settings = get_settings()
-    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
+    return get_embedder()  # 프로세스 단일 캐시 임베더
 
 
 @lru_cache

@@ -12,26 +12,14 @@ Claude Desktop 연결: README/응답의 설정 JSON 참고.
 
 from __future__ import annotations
 
-from functools import lru_cache
-
 from mcp.server.fastmcp import FastMCP
 
 from apps.mcp import queries
 from dip_platform.access import allowed_patterns, load_policies
-from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
+from infrastructure.embedding.client import get_embedder  # 프로세스 단일 캐시 임베더
 from shared.config.settings import get_settings
 
 mcp = FastMCP("dip-knowledge-library")
-
-
-@lru_cache
-def _get_embedder() -> Embedder:
-    """로컬 임베더(fastembed)를 최초 의미검색 시 1회 로딩한다(모델 다운로드/캐시).
-
-    LLM 이 아니라 로컬 임베딩 모델이다 — 외부 전송 0, 서버의 'LLM 0' 원칙과 상충하지 않는다.
-    """
-    settings = get_settings()
-    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
 
 
 def _access_shelf_patterns() -> tuple[str, ...] | None:
@@ -82,7 +70,7 @@ async def search_wiki(query: str, limit: int = 5) -> str:
     patterns = _access_shelf_patterns()
     if patterns is not None and not patterns:
         return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가). 관리자에게 서가 권한을 요청하세요."
-    embedding = await _get_embedder().embed_query(query)
+    embedding = await get_embedder().embed_query(query)
     return await queries.search_wiki_by_vector(embedding, limit, patterns or ())
 
 

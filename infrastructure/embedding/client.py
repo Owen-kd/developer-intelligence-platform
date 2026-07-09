@@ -15,7 +15,9 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import threading
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 # HuggingFace 'xet' 가속 다운로드 백엔드를 끈다(모델은 최초 1회 캐시되면 그만).
@@ -54,12 +56,16 @@ class FastEmbedEmbedder(Embedder):
         self._model_name = model_name
         self._dim = dim
         self._model: TextEmbedding | None = None
+        self._lock = threading.Lock()  # executor 스레드 간 지연로딩 경쟁 방지
 
     def _ensure_model(self) -> TextEmbedding:
+        # 이중 검사 락: 동시 임베드(예: WikiAutoGenerator+Push)가 모델을 이중 생성하지 않도록.
         if self._model is None:
-            from fastembed import TextEmbedding  # 지연 import — Fake 사용 시 의존성 불필요
+            with self._lock:
+                if self._model is None:
+                    from fastembed import TextEmbedding  # 지연 import(Fake 시 불필요)
 
-            self._model = TextEmbedding(model_name=self._model_name)
+                    self._model = TextEmbedding(model_name=self._model_name)
         return self._model
 
     @property
@@ -110,3 +116,15 @@ class FakeEmbedder(Embedder):
 
     async def embed_query(self, text: str) -> list[float]:
         return self._vector(text)
+
+
+@lru_cache(maxsize=1)
+def get_embedder() -> Embedder:
+    """설정 기반 프로세스 단일 임베더(warm 인스턴스 재사용) — 매 호출 재생성 방지.
+
+    모든 조립 지점(apps)이 이 팩토리를 공유해 모델을 한 번만 로딩한다.
+    """
+    from shared.config.settings import get_settings
+
+    settings = get_settings()
+    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)

@@ -21,7 +21,7 @@ from sqlalchemy import text
 
 from dip_platform.event import Event, EventBus, InMemoryEventBus
 from dip_platform.registry import FilePromptRegistry
-from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
+from infrastructure.embedding.client import Embedder, get_embedder
 from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres import connection as pg
@@ -37,7 +37,7 @@ from modules.knowledge.application.wiki_service import (
     wiki_embedding_text,
 )
 from modules.knowledge.domain.entity import Knowledge
-from modules.knowledge.domain.repository import IssueSourceReader, KnowledgeRepository
+from modules.knowledge.domain.repository import IssueSourceReader
 from modules.knowledge.infrastructure.repository import (
     PostgresIssueSourceReader as _SnapshotReader,
 )
@@ -140,7 +140,7 @@ def _build_llm(settings: Settings) -> tuple[LLMClient, str]:
 
 
 def _build_embedder(settings: Settings) -> Embedder:
-    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
+    return get_embedder()  # 프로세스 단일 캐시 인스턴스(재생성 방지)
 
 
 @dataclass
@@ -273,6 +273,12 @@ def _in_domain(components: tuple[str, ...], keywords: tuple[str, ...]) -> bool:
     return any(keyword in component for component in components for keyword in keywords)
 
 
+class _EmbeddingSink(Protocol):
+    """WikiAutoGenerator 가 필요로 하는 임베딩 저장 능력(구조적 타이핑)."""
+
+    async def save_embedding(self, knowledge_id: str, embedding: list[float]) -> None: ...
+
+
 class WikiAutoGenerator:
     """루프2 자동화: IssueCreated 이벤트 → (도메인 필터 통과 시) 위키 생성·임베딩.
 
@@ -284,7 +290,7 @@ class WikiAutoGenerator:
         self,
         service: WikiGenerationService,
         reader: IssueSourceReader,
-        repo: KnowledgeRepository,
+        repo: _EmbeddingSink,
         embedder: Embedder,
         bus: EventBus,
         keywords: tuple[str, ...] = PRODUCT_KEYWORDS,
@@ -315,8 +321,7 @@ class WikiAutoGenerator:
         try:
             wiki = await self._service.generate(snapshot)
             vectors = await self._embedder.embed_documents([wiki_embedding_text(wiki)])
-            if hasattr(self._repo, "save_embedding"):
-                await self._repo.save_embedding(wiki.id, vectors[0])
+            await self._repo.save_embedding(wiki.id, vectors[0])
             self.generated += 1
             _logger.info("wiki.auto_generated", jira_key=snapshot.jira_key)
         except Exception as exc:  # 자동화는 1건 실패로 멈추지 않는다
