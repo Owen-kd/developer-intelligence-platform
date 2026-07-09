@@ -37,7 +37,63 @@ services:
     volumes:
       - redis_data:/data
 
+  # ── 앱 서비스(24시간 상시) — target-service. 모두 같은 이미지, command 로 역할 선택 ──
+  # 공통 환경: 인프라 호스트는 서비스명(postgres/redis). 시크릿(ANTHROPIC/JIRA)은 .env 로 주입.
+  api:
+    build: .
+    container_name: dip-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    volumes:
+      - hf_cache:/root/.cache   # fastembed 모델 캐시(재다운로드 방지)
+
+  worker:
+    build: .
+    container_name: dip-worker
+    command: ["python", "-m", "apps.worker.run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - hf_cache:/root/.cache
+
+  scheduler:
+    build: .
+    container_name: dip-scheduler
+    command: ["python", "-m", "apps.scheduler.run"]  # SCHEDULER_ENABLED=false 면 즉시 종료
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - hf_cache:/root/.cache
+
 volumes:
   pg_data:
   neo4j_data:
   redis_data:
+  hf_cache:

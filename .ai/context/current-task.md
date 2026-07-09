@@ -41,6 +41,7 @@
   - 브로커: `RedisEventBus`([ADR-011](../decisions/ADR-011-redis-event-bus.md), Streams+group). 상시 진입점 `apps/worker/run` · `apps/scheduler/run`(기본 OFF, APR-002 게이트).
   - e2e 라이브: 발행→실 Redis→소비→루프2 생성 검증. 게이트 그린(ruff/mypy 201/pytest 72).
   - 미완(게이트): 실 자동수집 활성화(APR-002), Push 실 Jira 코멘트 쓰기 승인, 되먹임(gap) 활용.
+- [x] **24h 서비스 구동 배선** — `Dockerfile`(editable, 자산경로 보존) + compose 앱 서비스(api/worker/scheduler, 서비스명 호스트·hf_cache 볼륨) + 가이드 [run-24h-service](../onboarding/run-24h-service.md). **이미지 빌드+컨테이너 임포트/자산로드 검증 통과.**
 - [x] **접근제어 stage1**(팀별 서가, [ADR-010](../decisions/ADR-010-team-shelf-access-control.md), 기본 OFF) — `dip_platform/access`(정책, 기본 deny) + `config/access/team_shelves.txt` + `search_semantic` 서가필터 + `/ask`(헤더 X-DIP-Team)·MCP(env DIP_TEAM) 시행 + 감사. 라이브 격리 검증(infra/support→commerce 위키 0건). 켜는 건 APR-010 승인 게이트. 유닛 3건.
 - [x] **되먹임 루프** — `gap_analysis.aggregate_gaps`(유사질문 집계, 빈도+낮은커버리지 랭킹) + `gap_candidates`(gap과 겹치나 위키 없는 이슈=생성대상). CLI `wiki gaps` + API `/ask/gaps`(집계). 라이브: "쿠팡 옵션 엑셀 오류"→후보 ENG-8404. 유닛 3건. (후보매칭 키워드 기반, 의미검색 정밀화는 후속)
 - [x] **정제 계층**(LLM 0, 비파괴) — `modules/knowledge/application/refinement.py`(노이즈 필터 `filter_comments` + 가치 게이트 `is_wiki_worthy`/`assess`), 노이즈목록 `config/refinement/noise_phrases.txt`(운영 조정). 위키 프롬프트는 clean 코멘트만, 신호 빈약 이슈는 인덱스만(LLM 스킵). 실측(상품 60건): 인덱스만 4 · 코멘트 드롭 7%. 원본 보존(헌법). 유닛 8건. 큰 이득은 ENG 지원도메인.
