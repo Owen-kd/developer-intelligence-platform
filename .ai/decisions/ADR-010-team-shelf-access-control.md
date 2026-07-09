@@ -1,7 +1,7 @@
 # ADR-010 — 팀별 서가(component) 열람 권한 · 접근제어 모델
 
 - 상태: **1단계 구현됨(기본 OFF)** — 코드는 머지 가능, **켜는 것(`ACCESS_CONTROL_ENABLED=true`)은 [APR-010](../planning/approvals/APR-010-access-control.md) 승인 후**
-- 구현 범위(2026-07-09): `dip_platform/access`(TeamPolicy, 기본 deny) + `config/access/team_shelves.txt` + `search_semantic` 서가필터(이슈 조인) + `/ask`(헤더 `X-DIP-Team`) + **MCP 전 읽기경로**(`search_wiki`·`search_issues`·`get_issue`, env `DIP_TEAM`) 시행 + 감사. 라이브 격리 검증(infra/support 팀 → commerce 위키·이슈 0건). 후속: 실 인증(OIDC/JWT), `get_expert_knowledge`·이슈 API(인메모리 경로) 확대.
+- 구현 범위(2026-07-09): `dip_platform/access`(TeamPolicy, 기본 deny) + `config/access/team_shelves.txt` + `search_semantic` 서가필터(이슈 조인) + `/ask`(헤더 `X-DIP-Team`) + **MCP 전 읽기경로**(`search_wiki`·`search_issues`·`get_issue`·`get_expert_knowledge`(미허가 차단)·`list_shelves`(허용 서가만), env `DIP_TEAM`) 시행 + 감사. 접근제어 필터 질의는 gap 로그 미오염(질문 원문 누출 방지). 라이브 격리 검증(infra/support→commerce 0건, list_shelves 팀필터). 후속: 실 인증(OIDC/JWT), 전문가 문서 서가 태깅, `/ask/gaps` 팀 스코프, 이슈 API(인메모리) 확대.
 - 날짜: 2026-07-08
 - 관련: [APR-010](../planning/approvals/APR-010-access-control.md) · [ADR-009](ADR-009-local-embedding-pgvector.md) · 보안/격리 논의(오너 2026-07-08)
 
