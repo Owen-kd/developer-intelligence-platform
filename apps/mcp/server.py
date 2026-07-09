@@ -52,7 +52,10 @@ async def search_issues(query: str, limit: int = 8) -> str:
     Jira 이슈(제목·본문)에서 모든 키워드가 포함된 건을 찾아 상태·담당자·서가·요약을 반환한다.
     예: query="쿠팡 옵션 수정 안됨".
     """
-    return await queries.search_issues(query, limit)
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
+    return await queries.search_issues(query, limit, patterns or ())
 
 
 @mcp.tool()
@@ -81,7 +84,10 @@ async def search_wiki(query: str, limit: int = 5) -> str:
 @mcp.tool()
 async def get_issue(jira_key: str) -> str:
     """이슈 키(예: PA20-19864)로 상세(본문 + 링크된 커밋)를 가져온다."""
-    return await queries.issue_detail(jira_key)
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
+    return await queries.issue_detail(jira_key, patterns or ())
 
 
 @mcp.tool()

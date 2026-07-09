@@ -17,8 +17,23 @@ def _patterns(query: str) -> list[str]:
     return [f"%{word}%" for word in query.split() if word.strip()]
 
 
-async def search_issues(query: str, limit: int = 8) -> str:
-    """문의/키워드로 유사 이슈를 찾는다(모든 단어가 제목 또는 본문에 포함)."""
+def _shelf_cond(alias: str, shelf_patterns: tuple[str, ...]) -> str:
+    """접근제어(ADR-010) 서가 필터 SQL 조각 — 이슈 components 가 패턴에 하나라도 매칭."""
+    if not shelf_patterns:
+        return ""
+    return (
+        f"AND EXISTS (SELECT 1 FROM jsonb_array_elements_text({alias}.components) s "
+        "WHERE s ILIKE ANY(:shelfpats))"
+    )
+
+
+async def search_issues(
+    query: str, limit: int = 8, shelf_patterns: tuple[str, ...] = ()
+) -> str:
+    """문의/키워드로 유사 이슈를 찾는다(모든 단어가 제목 또는 본문에 포함).
+
+    `shelf_patterns`(접근제어) 가 주어지면 그 서가의 이슈만 반환한다.
+    """
     patterns = _patterns(query)
     cond = (
         "(i.summary || ' ' || coalesce(i.description,'')) ILIKE ALL(:pats)" if patterns else "TRUE"
@@ -28,13 +43,15 @@ async def search_issues(query: str, limit: int = 8) -> str:
         SELECT i.jira_key, i.status, i.priority, coalesce(i.assignee,'') AS assignee,
                i.components, i.summary, left(coalesce(i.description,''), 220) AS snippet,
                (SELECT count(*) FROM issue_commits ic WHERE ic.issue_id = i.id) AS commits
-        FROM issues i WHERE {cond}
+        FROM issues i WHERE {cond} {_shelf_cond("i", shelf_patterns)}
         ORDER BY i.updated_at DESC LIMIT :lim
         """
     )
     params: dict[str, object] = {"lim": limit}
     if patterns:
         params["pats"] = patterns
+    if shelf_patterns:
+        params["shelfpats"] = list(shelf_patterns)
     async with pg.get_engine().connect() as conn:
         rows = (await conn.execute(sql, params)).all()
 
@@ -83,18 +100,24 @@ async def expert_knowledge(query: str = "", limit: int = 5) -> str:
     return "\n---\n".join(lines)
 
 
-async def issue_detail(jira_key: str) -> str:
-    """이슈 키로 상세(본문 + 링크된 커밋)를 가져온다."""
+async def issue_detail(jira_key: str, shelf_patterns: tuple[str, ...] = ()) -> str:
+    """이슈 키로 상세(본문 + 링크된 커밋)를 가져온다.
+
+    `shelf_patterns`(접근제어) 가 주어지면 그 서가의 이슈가 아니면 미노출(존재도 숨김).
+    """
     sql = text(
-        """
-        SELECT id, jira_key, type, status, priority, coalesce(assignee,'') AS assignee,
-               coalesce(reporter,'') AS reporter, components, summary,
-               coalesce(description,'') AS description
-        FROM issues WHERE jira_key = :k
+        f"""
+        SELECT i.id, i.jira_key, i.type, i.status, i.priority,
+               coalesce(i.assignee,'') AS assignee, coalesce(i.reporter,'') AS reporter,
+               i.components, i.summary, coalesce(i.description,'') AS description
+        FROM issues i WHERE i.jira_key = :k {_shelf_cond("i", shelf_patterns)}
         """
     )
+    params: dict[str, object] = {"k": jira_key}
+    if shelf_patterns:
+        params["shelfpats"] = list(shelf_patterns)
     async with pg.get_engine().connect() as conn:
-        issue = (await conn.execute(sql, {"k": jira_key})).first()
+        issue = (await conn.execute(sql, params)).first()
         if issue is None:
             return f"{jira_key} 이슈를 찾지 못했습니다."
         commits = (
