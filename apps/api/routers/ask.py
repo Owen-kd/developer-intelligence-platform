@@ -10,12 +10,12 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
 from apps.api.dependencies.auth import require_principal
 from apps.wiki_pipeline import ask as run_ask
+from apps.wiki_pipeline import load_gap_records
 from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
-from infrastructure.postgres import connection as pg
+from modules.knowledge.application.gap_analysis import aggregate_gaps
 from shared.config.settings import get_settings
 
 router = APIRouter(
@@ -51,8 +51,9 @@ class AskResponse(BaseModel):
 
 class GapView(BaseModel):
     question: str
-    hit_count: int
-    top_score: float
+    occurrences: int
+    avg_top_score: float
+    variants: int
 
 
 @router.post("", response_model=AskResponse)
@@ -75,16 +76,16 @@ async def ask_question(req: AskRequest) -> AskResponse:
 
 @router.get("/gaps", response_model=list[GapView])
 async def list_gaps(limit: int = 20) -> list[GapView]:
-    """답 못한/약한 질문 목록(되먹임) — 무엇을 위키화·수집할지 신호."""
-    sql = text(
-        "SELECT question, hit_count, top_score FROM query_gaps "
-        "ORDER BY created_at DESC LIMIT :lim"
-    )
-    async with pg.get_engine().connect() as conn:
-        rows = (await conn.execute(sql, {"lim": limit})).all()
+    """지식 구멍(되먹임) — 유사질문을 묶어 '자주 묻는데 커버리지 낮은 순'으로."""
+    clusters = aggregate_gaps(await load_gap_records(), limit=limit)
     return [
-        GapView(question=row.question, hit_count=row.hit_count, top_score=row.top_score)
-        for row in rows
+        GapView(
+            question=cluster.question,
+            occurrences=cluster.occurrences,
+            avg_top_score=round(cluster.avg_top_score, 4),
+            variants=cluster.variants,
+        )
+        for cluster in clusters
     ]
 
 

@@ -41,6 +41,7 @@
   - 브로커: `RedisEventBus`([ADR-011](../decisions/ADR-011-redis-event-bus.md), Streams+group). 상시 진입점 `apps/worker/run` · `apps/scheduler/run`(기본 OFF, APR-002 게이트).
   - e2e 라이브: 발행→실 Redis→소비→루프2 생성 검증. 게이트 그린(ruff/mypy 201/pytest 72).
   - 미완(게이트): 실 자동수집 활성화(APR-002), Push 실 Jira 코멘트 쓰기 승인, 되먹임(gap) 활용.
+- [x] **되먹임 루프** — `gap_analysis.aggregate_gaps`(유사질문 집계, 빈도+낮은커버리지 랭킹) + `gap_candidates`(gap과 겹치나 위키 없는 이슈=생성대상). CLI `wiki gaps` + API `/ask/gaps`(집계). 라이브: "쿠팡 옵션 엑셀 오류"→후보 ENG-8404. 유닛 3건. (후보매칭 키워드 기반, 의미검색 정밀화는 후속)
 - [x] **정제 계층**(LLM 0, 비파괴) — `modules/knowledge/application/refinement.py`(노이즈 필터 `filter_comments` + 가치 게이트 `is_wiki_worthy`/`assess`), 노이즈목록 `config/refinement/noise_phrases.txt`(운영 조정). 위키 프롬프트는 clean 코멘트만, 신호 빈약 이슈는 인덱스만(LLM 스킵). 실측(상품 60건): 인덱스만 4 · 코멘트 드롭 7%. 원본 보존(헌법). 유닛 8건. 큰 이득은 ENG 지원도메인.
 - [ ] 나머지 375건(상품 도메인 총 405건) + 타 도메인 생성 대기. `ANTHROPIC_MODEL=claude-sonnet-5 python -m apps.cli.wiki build`.
 - [ ] 후속: 백엔드 도메인 지식(`gmp.openapi.2023/.ai/domains/product/`) → DIP `knowledge/` 흡수로 근본원인 grounding 강화 · 전문가 검증 루프(verified 승격) · 전량 자동수집(스케줄러, APR-002) · 접근제어([ADR-010]/[APR-010]).

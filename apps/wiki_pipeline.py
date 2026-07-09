@@ -29,6 +29,7 @@ from infrastructure.postgres.event_store import PostgresEventStore
 from modules.jira.application.service import JiraService, SyncResult
 from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
+from modules.knowledge.application.gap_analysis import GapRecord
 from modules.knowledge.application.refinement import assess
 from modules.knowledge.application.wiki_service import (
     WIKI_TYPE,
@@ -66,6 +67,41 @@ async def _record_gap(question: str, hits: list[tuple[Knowledge, float]]) -> Non
     )
     async with pg.get_engine().begin() as conn:
         await conn.execute(sql, {"q": question, "n": len(hits), "s": top})
+
+
+async def load_gap_records() -> list[GapRecord]:
+    """query_gaps 전체를 읽어 집계 입력(GapRecord)으로 반환한다(되먹임)."""
+    sql = text("SELECT question, hit_count, top_score FROM query_gaps")
+    async with pg.get_engine().connect() as conn:
+        rows = (await conn.execute(sql)).all()
+    return [
+        GapRecord(question=row.question, hit_count=row.hit_count, top_score=row.top_score)
+        for row in rows
+    ]
+
+
+async def gap_candidates(question: str, limit: int = 5) -> list[tuple[str, str]]:
+    """gap 질문과 겹치지만 **아직 위키가 없는** 이슈를 찾는다(=위키화 후보).
+
+    되먹임을 닫는 지점: "이 질문에 답할 이슈가 있는데 위키가 없다" → 생성 대상.
+    """
+    words = [word for word in question.split() if len(word) >= 2]
+    if not words:
+        return []
+    patterns = [f"%{word}%" for word in words]
+    sql = text(
+        """
+        SELECT i.jira_key, i.summary FROM issues i
+        WHERE (i.summary || ' ' || coalesce(i.description,'')) ILIKE ANY(:pats)
+          AND NOT EXISTS (
+              SELECT 1 FROM knowledge k WHERE k.type = 'wiki' AND k.issue_id = i.id
+          )
+        ORDER BY i.updated_at DESC LIMIT :lim
+        """
+    )
+    async with pg.get_engine().connect() as conn:
+        rows = (await conn.execute(sql, {"pats": patterns, "lim": limit})).all()
+    return [(row.jira_key, row.summary) for row in rows]
 
 
 def _fake_wiki_response(_system: str, user: str) -> str:
