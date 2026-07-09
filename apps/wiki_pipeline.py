@@ -29,6 +29,7 @@ from infrastructure.postgres.event_store import PostgresEventStore
 from modules.jira.application.service import JiraService, SyncResult
 from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
+from modules.knowledge.application.refinement import assess
 from modules.knowledge.application.wiki_service import (
     WIKI_TYPE,
     WikiGenerationService,
@@ -112,6 +113,7 @@ class BuildResult:
     candidates: int  # 도메인 필터를 통과한 이슈 수
     wikis_built: int  # 실제 생성·임베딩한 위키 수
     failed: int  # 생성/검증 실패로 건너뛴 이슈 수(정직 보고 — 배치는 1건 실패로 멈추지 않는다)
+    index_only: int  # 가치 게이트 탈락(제목+상태만) — LLM 비용 절약분
 
 
 @dataclass
@@ -194,9 +196,20 @@ async def build_wikis(
 
     built = 0
     failed = 0
+    index_only = 0
     for issue_id in issue_ids:
         snapshot = await reader.get_snapshot(issue_id)
         if snapshot is None:
+            continue
+        # 가치 게이트: 신호 빈약한 이슈는 LLM 생성 스킵(제목+상태만 인덱싱) — 비용 절약
+        refinement = assess(
+            snapshot.comments,
+            description=snapshot.description,
+            commit_shas=snapshot.commit_shas,
+        )
+        if not refinement.worthy:
+            index_only += 1
+            _logger.info("wiki.index_only", jira_key=snapshot.jira_key)
             continue
         try:
             grounding = await _grounding_for(snapshot.components or keywords)
@@ -211,7 +224,11 @@ async def build_wikis(
         _logger.info("wiki.built", jira_key=snapshot.jira_key, grounded=len(grounding))
 
     return BuildResult(
-        llm_mode=llm_mode, candidates=len(issue_ids), wikis_built=built, failed=failed
+        llm_mode=llm_mode,
+        candidates=len(issue_ids),
+        wikis_built=built,
+        failed=failed,
+        index_only=index_only,
     )
 
 
@@ -250,6 +267,14 @@ class WikiAutoGenerator:
             return
         snapshot = await self._reader.get_snapshot(str(issue_id))
         if snapshot is None or not _in_domain(snapshot.components, self._keywords):
+            return
+        # 가치 게이트: 신호 빈약한 이슈는 자동 위키 생성 스킵(제목+상태만 인덱싱)
+        if not assess(
+            snapshot.comments,
+            description=snapshot.description,
+            commit_shas=snapshot.commit_shas,
+        ).worthy:
+            _logger.info("wiki.auto_index_only", jira_key=snapshot.jira_key)
             return
         try:
             wiki = await self._service.generate(snapshot)

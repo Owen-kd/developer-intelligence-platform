@@ -19,8 +19,8 @@ from infrastructure.postgres import connection as pg
 async def _build(limit: int | None) -> None:
     result = await build_wikis(limit=limit)
     print(
-        f"[build] llm={result.llm_mode} · 후보 {result.candidates}건 · "
-        f"위키 생성 {result.wikis_built}건 · 실패 {result.failed}건"
+        f"[build] llm={result.llm_mode} · 후보 {result.candidates} · "
+        f"생성 {result.wikis_built} · 인덱스만 {result.index_only} · 실패 {result.failed}"
     )
 
 

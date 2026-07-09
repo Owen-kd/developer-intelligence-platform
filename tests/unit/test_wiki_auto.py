@@ -58,6 +58,7 @@ def _snap(issue_id: str, key: str, components: tuple[str, ...]) -> IssueSnapshot
         comments=(),
         commit_shas=(),
         source_event_ids=(),
+        description="쿠팡 옵션 수정여부 관련 실질 본문 — 가치 게이트 통과용 상세 설명입니다.",
         components=components,
     )
 
@@ -97,6 +98,24 @@ async def test_auto_generates_wiki_on_issue_created_in_domain() -> None:
     wiki = next(iter(repo.saved.values()))
     assert wiki.type == "wiki" and wiki.issue_id == "i-1"
     assert wiki.id in repo.embedded and len(repo.embedded[wiki.id]) == 8
+
+
+async def test_auto_skips_low_value_issue() -> None:
+    # 도메인은 맞지만 본문·코멘트·커밋 없음 → 가치 게이트 탈락(제목+상태만) → 생성 안 함
+    repo = _Repo()
+    empty = IssueSnapshot(
+        issue_id="i-3", jira_key="PA20-3", summary="쿠팡", status="열림", priority="Low",
+        comments=("넵", "처리 완료되었습니다"), commit_shas=(), source_event_ids=(),
+        description="", components=("쿠팡",),
+    )
+    reader = _Reader({"i-3": empty})
+    bus = InMemoryEventBus()
+    auto = _make(reader, repo, bus)
+
+    await bus.publish(Event(ISSUE_CREATED, _Created("i-3")))
+
+    assert auto.generated == 0
+    assert repo.saved == {}
 
 
 async def test_auto_skips_out_of_domain_issue() -> None:

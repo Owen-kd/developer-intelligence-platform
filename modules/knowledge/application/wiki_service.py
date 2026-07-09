@@ -15,6 +15,7 @@ import uuid
 from dip_platform.registry import PromptRegistry
 from dip_platform.workflow.validation import parse_json_output
 from infrastructure.llm.client import LLMClient
+from modules.knowledge.application.refinement import filter_comments
 from modules.knowledge.domain.entity import IssueSnapshot, Knowledge
 from modules.knowledge.domain.repository import KnowledgeRepository
 
@@ -72,10 +73,11 @@ def _render_user(snapshot: IssueSnapshot, grounding: tuple[Knowledge, ...]) -> s
         "## 본문",
         snapshot.description or "(본문 없음)",
     ]
-    if snapshot.comments:
+    clean_comments = filter_comments(snapshot.comments)  # 노이즈·중복 제거(비파괴)
+    if clean_comments:
         parts.append("")
         parts.append("## 코멘트")
-        parts.extend(f"- {comment}" for comment in snapshot.comments)
+        parts.extend(f"- {comment}" for comment in clean_comments)
     if grounding:
         parts.append("")
         parts.append("## 검증된 백엔드 지식(근거)")
