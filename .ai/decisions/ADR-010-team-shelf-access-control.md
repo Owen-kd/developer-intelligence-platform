@@ -1,6 +1,7 @@
 # ADR-010 — 팀별 서가(component) 열람 권한 · 접근제어 모델
 
-- 상태: **Proposed** (오너 승인 대기 — 구현 전 [APR-010](../planning/approvals/APR-010-access-control.md) 필요)
+- 상태: **1단계 구현됨(기본 OFF)** — 코드는 머지 가능, **켜는 것(`ACCESS_CONTROL_ENABLED=true`)은 [APR-010](../planning/approvals/APR-010-access-control.md) 승인 후**
+- 구현 범위(2026-07-09): `dip_platform/access`(TeamPolicy, 기본 deny) + `config/access/team_shelves.txt` + `search_semantic` 서가필터(이슈 조인) + `/ask`(헤더 `X-DIP-Team`)·MCP `search_wiki`(env `DIP_TEAM`) 시행 + 감사 로그. 라이브 격리 검증(infra/support 팀은 commerce 위키 0건). 후속: 실 인증(OIDC/JWT), 이슈/기타 read 경로 확대.
 - 날짜: 2026-07-08
 - 관련: [APR-010](../planning/approvals/APR-010-access-control.md) · [ADR-009](ADR-009-local-embedding-pgvector.md) · 보안/격리 논의(오너 2026-07-08)
 

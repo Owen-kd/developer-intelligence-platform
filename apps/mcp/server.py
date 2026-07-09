@@ -17,6 +17,7 @@ from functools import lru_cache
 from mcp.server.fastmcp import FastMCP
 
 from apps.mcp import queries
+from dip_platform.access import allowed_patterns, load_policies
 from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
 from shared.config.settings import get_settings
 
@@ -31,6 +32,17 @@ def _get_embedder() -> Embedder:
     """
     settings = get_settings()
     return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
+
+
+def _access_shelf_patterns() -> tuple[str, ...] | None:
+    """접근제어(ADR-010)가 켜져 있으면 이 프로세스 팀(DIP_TEAM)의 허용 서가를 반환.
+
+    None = 접근제어 OFF(제한 없음). 빈 튜플 = 팀 미허가(deny).
+    """
+    settings = get_settings()
+    if not settings.access_control_enabled:
+        return None
+    return allowed_patterns(load_policies(settings.access_policy_file), settings.dip_team)
 
 
 @mcp.tool()
@@ -59,8 +71,11 @@ async def search_wiki(query: str, limit: int = 5) -> str:
     키워드 일치가 아니라 의미 유사도 기반이라, 표현이 달라도 찾는다.
     예: query="쿠팡에서 옵션이 수정이 안돼요" → 관련 위키를 증상·근본원인·해결과 함께 반환.
     """
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가). 관리자에게 서가 권한을 요청하세요."
     embedding = await _get_embedder().embed_query(query)
-    return await queries.search_wiki_by_vector(embedding, limit)
+    return await queries.search_wiki_by_vector(embedding, limit, patterns or ())
 
 
 @mcp.tool()

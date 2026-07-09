@@ -7,16 +7,21 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from apps.api.dependencies.auth import require_principal
 from apps.wiki_pipeline import ask as run_ask
 from apps.wiki_pipeline import load_gap_records
+from dip_platform.access import allowed_patterns, load_policies
 from infrastructure.embedding.client import Embedder, FastEmbedEmbedder
 from modules.knowledge.application.gap_analysis import aggregate_gaps
 from shared.config.settings import get_settings
+from shared.logger import get_logger
+
+_logger = get_logger("api.ask")
 
 router = APIRouter(
     prefix="/ask",
@@ -29,6 +34,11 @@ router = APIRouter(
 def _embedder() -> Embedder:
     settings = get_settings()
     return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
+
+
+@lru_cache
+def _policies() -> dict[str, tuple[str, ...]]:
+    return load_policies(get_settings().access_policy_file)
 
 
 class AskRequest(BaseModel):
@@ -57,8 +67,21 @@ class GapView(BaseModel):
 
 
 @router.post("", response_model=AskResponse)
-async def ask_question(req: AskRequest) -> AskResponse:
-    result = await run_ask(req.question, k=req.k, embedder=_embedder())
+async def ask_question(
+    req: AskRequest,
+    x_dip_team: Annotated[str | None, Header()] = None,
+) -> AskResponse:
+    # 접근제어(ADR-010): 켜져 있으면 팀 허용 서가로 검색을 제한한다(기본 deny + 감사).
+    shelf_patterns: tuple[str, ...] = ()
+    if get_settings().access_control_enabled:
+        team = x_dip_team or ""
+        shelf_patterns = allowed_patterns(_policies(), team)
+        _logger.info("ask.access", team=team or "(none)", shelves=len(shelf_patterns))
+        if not shelf_patterns:
+            raise HTTPException(status_code=403, detail="열람 권한이 없습니다(팀 미지정/미허가)")
+    result = await run_ask(
+        req.question, k=req.k, embedder=_embedder(), shelf_patterns=shelf_patterns
+    )
     return AskResponse(
         question=result.question,
         answer=result.answer,

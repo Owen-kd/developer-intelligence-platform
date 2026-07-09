@@ -121,13 +121,18 @@ async def issue_detail(jira_key: str) -> str:
     return "\n".join(out)
 
 
-async def search_wiki_by_vector(embedding: list[float], limit: int = 5) -> str:
+async def search_wiki_by_vector(
+    embedding: list[float], limit: int = 5, shelf_patterns: tuple[str, ...] = ()
+) -> str:
     """질의 임베딩과 의미가 유사한 위키를 top-k 로 반환한다(벡터 RAG, 키워드 아님).
 
     임베딩 생성은 호출자(서버)의 로컬 임베더 책임 — 이 함수는 검색·조립만 한다(생성/모델 없음).
+    `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 반환한다.
     """
     repo = PostgresKnowledgeRepository()
-    hits = await repo.search_semantic(embedding, limit=limit, types=(WIKI_TYPE,))
+    hits = await repo.search_semantic(
+        embedding, limit=limit, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
     if not hits:
         return (
             "관련 위키가 없습니다. (아직 위키 미생성일 수 있음 — "

@@ -444,17 +444,21 @@ async def ask(
     embedder: Embedder | None = None,
     llm: LLMClient | None = None,
     log_gap: bool = True,
+    shelf_patterns: tuple[str, ...] = (),
 ) -> AskResult:
     """RAG: 질문과 유사한 위키를 찾아 LLM 답변을 조립한다(위키 없으면 검색 결과만).
 
     근거가 없거나 약하면(is_gap) 질문을 query_gaps 에 남긴다(되먹임). gap 실패는 답변을 막지 않는다.
+    `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 검색한다.
     """
     settings = get_settings()
     embedder = embedder or _build_embedder(settings)
     knowledge_repo = PostgresKnowledgeRepository()
 
     query_vec = await embedder.embed_query(question)
-    hits = await knowledge_repo.search_semantic(query_vec, limit=k, types=(WIKI_TYPE,))
+    hits = await knowledge_repo.search_semantic(
+        query_vec, limit=k, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
 
     if log_gap and is_gap(hits):
         try:

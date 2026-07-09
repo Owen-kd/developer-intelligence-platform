@@ -136,25 +136,37 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
         embedding: list[float],
         limit: int = 5,
         types: tuple[str, ...] = (),
+        shelf_patterns: tuple[str, ...] = (),
     ) -> list[tuple[Knowledge, float]]:
         """질의 임베딩과 코사인 유사한 지식을 top-k 로 반환한다(유사도 내림차순).
 
         `types` 가 주어지면 해당 type 만 검색한다(예: ('wiki',)). 미임베딩 행은 제외된다.
+        `shelf_patterns` 가 주어지면(접근제어, ADR-010) 지식이 속한 이슈의 서가(components)가
+        패턴(ILIKE)에 하나라도 매칭될 때만 반환한다(연결 이슈 없으면 제외 = 기본 deny).
         """
-        type_cond = "AND type = ANY(:types)" if types else ""
+        type_cond = "AND k.type = ANY(:types)" if types else ""
+        shelf_cond = (
+            "AND EXISTS (SELECT 1 FROM issues i, "
+            "jsonb_array_elements_text(i.components) s "
+            "WHERE i.id = k.issue_id AND s ILIKE ANY(:shelfpats))"
+            if shelf_patterns
+            else ""
+        )
         query = text(
             f"""
-            SELECT id, type, issue_id, summary, body, sources, source, created_at,
-                   1 - (embedding <=> CAST(:q AS vector)) AS score
-            FROM knowledge
-            WHERE embedding IS NOT NULL {type_cond}
-            ORDER BY embedding <=> CAST(:q AS vector)
+            SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
+                   k.created_at, 1 - (k.embedding <=> CAST(:q AS vector)) AS score
+            FROM knowledge k
+            WHERE k.embedding IS NOT NULL {type_cond} {shelf_cond}
+            ORDER BY k.embedding <=> CAST(:q AS vector)
             LIMIT :lim
             """
         )
         params: dict[str, object] = {"q": _vector_literal(embedding), "lim": limit}
         if types:
             params["types"] = list(types)
+        if shelf_patterns:
+            params["shelfpats"] = list(shelf_patterns)
         async with pg.get_engine().connect() as conn:
             rows = (await conn.execute(query, params)).all()
         return [(_row_to_knowledge(row), float(row.score)) for row in rows]

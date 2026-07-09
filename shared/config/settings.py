@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = False
     scheduler_interval_seconds: int = 300
 
+    # Access control (팀별 서가 열람 — ADR-010). 기본 OFF(비파괴). 켜는 것은 APR-010 승인 후.
+    access_control_enabled: bool = False
+    access_policy_file: str = "config/access/team_shelves.txt"
+    dip_team: str = ""  # 이 프로세스(MCP 등)의 팀 — 접근제어 켜졌을 때 서가 제한에 사용
+
     @property
     def postgres_dsn(self) -> str:
         return (
