@@ -1,10 +1,10 @@
 # APR-003 — 신규 런타임 의존성 배치 승인
 
-- 상태: Pending Approval
+- 상태: **Approved (부분)** — 소유자 승인 2026-07-07 (Sprint-14 착수분: `anthropic`, `httpx`). 나머지(neo4j 등)는 해당 Sprint에서 재확인.
 - 요청일: 2026-07-07
 - 요청자: Project Planner (AI)
-- 관련 Sprint: Sprint-03, 04, 07, 08
-- 관련 ADR: 각 승인 시 ADR-005~ 생성
+- 관련 Sprint: Sprint-03, 04, 07, 08, 14
+- 관련 ADR: 각 승인 시 ADR-006~ 생성 (Sprint-14: [ADR-006](../../decisions/ADR-006-anthropic-adapter.md))
 
 ## 요청 요약
 [coding-guidelines]: "근거 없이 새 의존성 추가 금지 → 추가 시 ADR". 로드맵 완주에 필요한 의존성을 **배치로 사전 승인**하고, 채택 시 개별 ADR을 남긴다.
@@ -31,6 +31,7 @@
 - 미승인 시: 해당 Sprint 착수 불가.
 
 ## 승인 체크
-- [ ] 승인 (제외 항목: ___, 원칙: 표준/httpx 우선 ___)
+- [x] 승인 (Sprint-14 착수분: `anthropic` SDK + `httpx`. 원칙: 표준/httpx 우선, LLM은 벤더 SDK 허용) — 소유자, 2026-07-07
 - [ ] 조건부 승인 (조건: __________)
 - [ ] 거부 / 보류
+- 비고: neo4j / 임베딩(APR-004) 등 나머지 후보는 각 Sprint 착수 시 재확인.

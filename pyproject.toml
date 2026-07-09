@@ -11,7 +11,13 @@ dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "sqlalchemy>=2.0",
+    "greenlet>=3.0",  # SQLAlchemy async 엔진 런타임 필수(신규 Python 에서 자동설치 누락 대비)
     "asyncpg>=0.29",
+    "anthropic>=0.40",  # 실 LLM 어댑터 (infrastructure/anthropic) — APR-003/005, ADR-006
+    "httpx>=0.27",  # 실 Jira 어댑터 (infrastructure/jira) — APR-002/003, ADR-007
+    "mcp>=1.2",  # MCP 서버 — Claude Desktop 등에서 도서관 검색 (별도 LLM 불필요)
+    "fastembed>=0.3",  # 로컬 임베딩(ONNX, torch 불필요) — infrastructure/embedding, ADR-009
+    "redis>=5.0",  # Redis Streams EventBus — 다중 프로세스 상시 구동, ADR-011
 ]
 
 [project.optional-dependencies]
@@ -46,3 +52,15 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+# ML 런타임 의존성(fastembed→numpy/onnxruntime 등)은 타입 분석 대상에서 제외한다.
+# numpy 최신 스텁이 3.12+ 문법을 써서 3.11 타겟 분석 시 깨진다 → skip 으로 회피(ADR-009).
+[[tool.mypy.overrides]]
+module = [
+    "fastembed", "fastembed.*", "numpy", "numpy.*", "onnxruntime", "onnxruntime.*",
+    "redis", "redis.*",
+]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true
+ignore_errors = true

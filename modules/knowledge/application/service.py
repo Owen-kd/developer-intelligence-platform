@@ -23,9 +23,11 @@ _KNOWLEDGE_TYPE = "issue_summary"
 
 
 def _build_summary(snapshot: IssueSnapshot) -> str:
+    who = f", 담당 {snapshot.assignee}" if snapshot.assignee else ""
+    shelf = f" [서가: {', '.join(snapshot.components)}]" if snapshot.components else ""
     return (
-        f"{snapshot.jira_key} ({snapshot.status}/{snapshot.priority}): {snapshot.summary} "
-        f"— 코멘트 {len(snapshot.comments)}건, 링크된 커밋 {len(snapshot.commit_shas)}건."
+        f"{snapshot.jira_key} ({snapshot.status}/{snapshot.priority}): {snapshot.summary}{shelf} "
+        f"— 코멘트 {len(snapshot.comments)}건, 링크된 커밋 {len(snapshot.commit_shas)}건{who}."
     )
 
 
@@ -71,6 +73,11 @@ class PromotionService:
                 "jira_key": snapshot.jira_key,
                 "status": snapshot.status,
                 "priority": snapshot.priority,
+                "assignee": snapshot.assignee,
+                "reporter": snapshot.reporter,
+                "description": snapshot.description,  # 본문(원천, 2차 LLM 요약용)
+                "labels": list(snapshot.labels),
+                "components": list(snapshot.components),  # 서가
                 "comments": list(snapshot.comments),
                 "commit_shas": list(snapshot.commit_shas),
             },

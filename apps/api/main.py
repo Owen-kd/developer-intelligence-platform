@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from apps.api.routers import impact_analyses, incidents, issues
+from apps.api.routers import ask, impact_analyses, incidents, issues
 from apps.composition import build_and_run
 from infrastructure.postgres import connection as pg
 from shared.config.settings import get_settings
@@ -33,6 +33,7 @@ app = FastAPI(
 app.include_router(issues.router)
 app.include_router(impact_analyses.router)
 app.include_router(incidents.router)
+app.include_router(ask.router)
 
 
 @app.get("/health", tags=["system"])

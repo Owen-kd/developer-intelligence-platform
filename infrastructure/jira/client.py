@@ -8,7 +8,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+import httpx
+
+from shared.utils.scrub import scrub_text
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,11 @@ class JiraIssue:
     summary: str
     created_at: str
     updated_at: str
+    assignee: str = ""  # 담당자 표시명(PII 최소화)
+    reporter: str = ""  # 문의자 표시명
+    description: str = ""  # 본문(ADF→평문, 원천 보존)
+    labels: tuple[str, ...] = ()  # 도메인 태그(glossary급)
+    components: tuple[str, ...] = ()  # 도메인 서가
     comments: tuple[JiraComment, ...] = field(default_factory=tuple)
 
 
@@ -52,6 +62,11 @@ _SAMPLE_ISSUES: tuple[JiraIssue, ...] = (
         summary="결제 API 간헐적 타임아웃",
         created_at="2026-07-01T09:00:00+00:00",
         updated_at="2026-07-02T10:30:00+00:00",
+        assignee="민수",
+        reporter="지은",
+        description="피크 시간대 결제 요청이 간헐적으로 타임아웃됨. 재현 조건과 로그 첨부.",
+        labels=("2.0",),
+        components=("결제",),
         comments=(
             JiraComment(
                 external_id="c-101",
@@ -78,3 +93,125 @@ class FakeJiraClient(JiraClient):
 
     async def fetch_issues(self) -> list[JiraIssue]:
         return list(self._issues)
+
+
+def _adf_to_text(node: object) -> str:
+    """Atlassian Document Format(ADF) 트리에서 평문을 추출한다(코멘트 본문용)."""
+    if not isinstance(node, dict):
+        return ""
+    if node.get("type") == "text":
+        return str(node.get("text", ""))
+    content = node.get("content")
+    inner = "".join(_adf_to_text(c) for c in content) if isinstance(content, list) else ""
+    block = {"paragraph", "heading", "listItem", "blockquote", "codeBlock"}
+    return inner + "\n" if node.get("type") in block else inner
+
+
+def _named(fields: Mapping[str, object], key: str) -> str:
+    value = fields.get(key)
+    return str(value["name"]) if isinstance(value, dict) and value.get("name") else "Unknown"
+
+
+def _map_issue(raw: Mapping[str, object]) -> JiraIssue:
+    fields_obj = raw.get("fields", {})
+    fields: Mapping[str, object] = fields_obj if isinstance(fields_obj, dict) else {}
+
+    comment_field = fields.get("comment")
+    raw_comments = comment_field.get("comments", []) if isinstance(comment_field, dict) else []
+    comments = tuple(
+        JiraComment(
+            external_id=str(c.get("id", "")),
+            # PII 최소화: 작성자는 표시명만 저장(이메일/계정ID 미저장) — APR-002
+            author=str((c.get("author") or {}).get("displayName", "unknown")),
+            body=scrub_text(_adf_to_text(c.get("body")).strip()),  # PII/시크릿 제거
+            created_at=str(c.get("created", "")),
+        )
+        for c in raw_comments
+        if isinstance(c, dict)
+    )
+    def _display(key: str) -> str:
+        obj = fields.get(key)
+        return str(obj["displayName"]) if isinstance(obj, dict) and obj.get("displayName") else ""
+
+    raw_labels = fields.get("labels")
+    labels = tuple(str(x) for x in raw_labels) if isinstance(raw_labels, list) else ()
+    raw_comps = fields.get("components")
+    components = (
+        tuple(str(c["name"]) for c in raw_comps if isinstance(c, dict) and c.get("name"))
+        if isinstance(raw_comps, list)
+        else ()
+    )
+
+    return JiraIssue(
+        key=str(raw.get("key", "")),
+        type=_named(fields, "issuetype"),
+        status=_named(fields, "status"),
+        priority=_named(fields, "priority"),
+        summary=str(fields.get("summary", "")),
+        created_at=str(fields.get("created", "")),
+        updated_at=str(fields.get("updated", "")),
+        assignee=_display("assignee"),  # PII 최소화: 표시명만
+        reporter=_display("reporter"),
+        description=scrub_text(_adf_to_text(fields.get("description")).strip()),  # PII/시크릿 제거
+        labels=labels,
+        components=components,
+        comments=comments,
+    )
+
+
+class HttpJiraClient(JiraClient):
+    """실 Jira Cloud REST v3 읽기 전용 어댑터([APR-002], [ADR-007]).
+
+    Enhanced JQL 검색(`/search/jql`)을 사용한다(classic `/search` 는 410 Gone).
+    수집은 bounded(최근 N개) — 전량 증분 동기화는 후속 과제.
+    """
+
+    _FIELDS = (
+        "summary,status,issuetype,priority,created,updated,"
+        "assignee,reporter,description,labels,components,comment"
+    )
+    _PAGE_SIZE = 100  # /search/jql 페이지 상한
+
+    def __init__(
+        self,
+        base_url: str,
+        email: str,
+        api_token: str,
+        project_key: str,
+        max_issues: int = 10,
+    ) -> None:
+        if not (base_url and email and api_token and project_key):
+            raise ValueError("Jira 설정이 비어 있습니다 (.env JIRA_*).")
+        self._base = base_url.rstrip("/")
+        self._auth = httpx.BasicAuth(email, api_token)
+        self._jql = f"project={project_key} ORDER BY created DESC"
+        self._max = max_issues
+
+    async def fetch_issues(self) -> list[JiraIssue]:
+        """max_issues 에 도달하거나 마지막 페이지까지 nextPageToken 으로 순회한다."""
+        collected: list[JiraIssue] = []
+        token: str | None = None
+        async with httpx.AsyncClient(auth=self._auth, timeout=30.0) as client:
+            while len(collected) < self._max:
+                params: dict[str, str | int] = {
+                    "jql": self._jql,
+                    "maxResults": min(self._PAGE_SIZE, self._max - len(collected)),
+                    "fields": self._FIELDS,
+                }
+                if token:
+                    params["nextPageToken"] = token
+                resp = await client.get(
+                    f"{self._base}/rest/api/3/search/jql",
+                    params=params,
+                    headers={"Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if not isinstance(data, dict):
+                    break
+                page = [_map_issue(r) for r in data.get("issues", []) if isinstance(r, dict)]
+                collected.extend(page)
+                token = data.get("nextPageToken")
+                if data.get("isLast", True) or not token or not page:
+                    break
+        return collected[: self._max]

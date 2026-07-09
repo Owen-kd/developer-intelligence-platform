@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# Jira 이슈 키 패턴: PROJ-123 (대문자로 시작하는 프로젝트 키 - 숫자)
-_ISSUE_KEY_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+# Jira 이슈 키 패턴: PROJ-123 (대문자 시작 프로젝트 키 - 숫자)
+# 앞이 영숫자면 더 큰 토큰의 일부이므로 제외(`XPA20-1` 방지), 단 `_`·`/` 등 구분자 뒤는 허용.
+# 실 브랜치/머지 메시지의 `.../kaya_m_PA20-19827` 형태를 잡기 위함.
+_ISSUE_KEY_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-\d+")
 
 
 @dataclass
