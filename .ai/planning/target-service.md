@@ -66,7 +66,7 @@ IssueCreated ─▶ 유사 과거 위키 top-k(전 팀) 검색
 | 2. 지식화 | 🟢 이벤트 자동화(`WikiAutoGenerator` + `apps/worker/run`) — IssueCreated→자동 위키·임베딩 |
 | 3-Pull | 🟢 `POST /ask` API + gap 로그, MCP `search_wiki` |
 | 3-Push | 🟢 `RelatedKnowledgePush`(유사 위키 내부 연결). 실 Jira 코멘트 **쓰기는 게이트**(미구현) |
-| 되먹임 | 🟡 gap 로그(`query_gaps`) 적재됨 — "무엇을 위키화할지" 자동 우선순위화는 후속 |
+| 되먹임 | 🟢 gap 집계(`aggregate_gaps`) + 위키화 후보(`gap_candidates`), CLI `wiki gaps`·API `/ask/gaps`. 정제 계층(노이즈 필터+가치 게이트)도 배선 |
 | 브로커 | 🟢 `RedisEventBus`(ADR-011, Streams+group) — scheduler↔worker 프로세스 분리 구동 |
 > 4루프 backbone 이 실 Redis 왕복으로 e2e 검증됨. 남은 건: 실 자동수집 활성화(APR-002), Push의 실 Jira 쓰기 승인, 되먹임 활용.
 
