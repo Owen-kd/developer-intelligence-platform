@@ -64,6 +64,11 @@ async def get_expert_knowledge(query: str = "", limit: int = 5) -> str:
 
     예: query="요금 과충전" / "교환주문 플래그". query 비우면 전체 목록.
     """
+    # 검증 지식은 이슈에 매이지 않아 서가 필터가 불가 → 접근제어 ON 시 미허가 팀은 차단(deny).
+    # 허가된 팀에는 전사 공유 지식으로 노출한다(후속: 전문가 문서에 서가 태깅).
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
     return await queries.expert_knowledge(query, limit)
 
 
@@ -93,7 +98,10 @@ async def get_issue(jira_key: str) -> str:
 @mcp.tool()
 async def list_shelves(limit: int = 25) -> str:
     """도메인 서가(components) 목록과 각 이슈 수를 반환한다(둘러보기용)."""
-    return await queries.list_shelves(limit)
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
+    return await queries.list_shelves(limit, patterns or ())
 
 
 def main() -> None:

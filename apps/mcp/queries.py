@@ -179,16 +179,25 @@ async def search_wiki_by_vector(
     return "\n".join(lines)
 
 
-async def list_shelves(limit: int = 25) -> str:
-    """도메인 서가(components) 목록과 이슈 수."""
+async def list_shelves(limit: int = 25, shelf_patterns: tuple[str, ...] = ()) -> str:
+    """도메인 서가(components) 목록과 이슈 수.
+
+    `shelf_patterns`(접근제어) 가 주어지면 허용된 서가만 노출한다.
+    """
+    where = "WHERE shelf ILIKE ANY(:shelfpats)" if shelf_patterns else ""
     sql = text(
-        """
-        SELECT jsonb_array_elements_text(components) AS shelf, count(*) AS n
-        FROM issues GROUP BY 1 ORDER BY 2 DESC LIMIT :lim
+        f"""
+        SELECT shelf, count(*) AS n FROM (
+            SELECT jsonb_array_elements_text(components) AS shelf FROM issues
+        ) t {where}
+        GROUP BY shelf ORDER BY n DESC LIMIT :lim
         """
     )
+    params: dict[str, object] = {"lim": limit}
+    if shelf_patterns:
+        params["shelfpats"] = list(shelf_patterns)
     async with pg.get_engine().connect() as conn:
-        rows = (await conn.execute(sql, {"lim": limit})).all()
+        rows = (await conn.execute(sql, params)).all()
     lines = ["# 도메인 서가 (이슈 수)\n"]
     lines += [f"- {r.shelf}: {r.n}" for r in rows]
     return "\n".join(lines)

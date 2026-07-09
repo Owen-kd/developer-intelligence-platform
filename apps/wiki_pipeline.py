@@ -455,6 +455,11 @@ async def ask(
     embedder = embedder or _build_embedder(settings)
     knowledge_repo = PostgresKnowledgeRepository()
 
+    # 접근제어로 서가 필터된 질의는 gap 신호를 오염시키지 않는다: "다른 팀 서가라 안 보임"과
+    # "지식이 없음"을 구분할 수 없고, 제한된 사용자의 질문 원문을 gap 로그에 남기지 않기 위함.
+    if shelf_patterns:
+        log_gap = False
+
     query_vec = await embedder.embed_query(question)
     hits = await knowledge_repo.search_semantic(
         query_vec, limit=k, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
