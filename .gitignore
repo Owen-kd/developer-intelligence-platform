@@ -32,3 +32,6 @@ htmlcov/
 # Data / volumes
 docker/**/data/
 *.log
+
+# Obsidian export 볼트(파생 뷰 — Postgres 가 진실원천)
+vault/

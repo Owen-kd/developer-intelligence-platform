@@ -131,6 +131,47 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             rows = (await conn.execute(query, {"iid": issue_id})).all()
         return [(_row_to_knowledge(row), float(row.score)) for row in rows]
 
+    async def list_wikis_with_meta(
+        self,
+    ) -> list[tuple[Knowledge, str | None, tuple[str, ...]]]:
+        """모든 위키 + (jira_key, 서가components) 를 조회한다 — Obsidian export 용."""
+        query = text(
+            """
+            SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
+                   k.created_at, i.jira_key, i.components
+            FROM knowledge k LEFT JOIN issues i ON i.id = k.issue_id
+            WHERE k.type = 'wiki'
+            ORDER BY i.jira_key
+            """
+        )
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query)).all()
+        result: list[tuple[Knowledge, str | None, tuple[str, ...]]] = []
+        for row in rows:
+            jira_key = row.jira_key if row.jira_key else None
+            components = tuple(row.components) if row.components else ()
+            result.append((_row_to_knowledge(row), jira_key, components))
+        return result
+
+    async def related_wiki_keys_by_issue(self) -> dict[str, list[str]]:
+        """issue_id(uuid) → 연결된 관련 위키의 Jira 키 목록(유사도 내림차순). Obsidian 링크용."""
+        query = text(
+            """
+            SELECT r.issue_id, i2.jira_key
+            FROM issue_related_wiki r
+            JOIN knowledge w ON w.id = r.wiki_id
+            JOIN issues i2 ON i2.id = w.issue_id
+            WHERE i2.jira_key IS NOT NULL
+            ORDER BY r.issue_id, r.score DESC
+            """
+        )
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query)).all()
+        mapping: dict[str, list[str]] = {}
+        for row in rows:
+            mapping.setdefault(str(row.issue_id), []).append(row.jira_key)
+        return mapping
+
     async def embeddings_for(self, ids: list[str]) -> dict[str, list[float]]:
         """주어진 지식 id 들의 임베딩 벡터를 조회한다(다양화 MMR 등 후처리용).
 
