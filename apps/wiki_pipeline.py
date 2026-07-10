@@ -22,6 +22,7 @@ from sqlalchemy import text
 from dip_platform.event import Event, EventBus, InMemoryEventBus
 from dip_platform.registry import FilePromptRegistry
 from infrastructure.embedding.client import Embedder, get_embedder
+from infrastructure.embedding.reranker import Reranker, get_reranker
 from infrastructure.jira.client import FakeJiraClient, HttpJiraClient, JiraClient
 from infrastructure.llm.client import FakeLLMClient, LLMClient
 from infrastructure.postgres import connection as pg
@@ -457,12 +458,63 @@ async def collect_and_generate(
     )
 
 
+def _build_reranker(settings: Settings) -> Reranker | None:
+    """설정이 켜져 있으면 프로세스 단일 리랭커, 꺼져 있으면 None(융합 순위 그대로)."""
+    if not settings.rerank_enabled:
+        return None
+    return get_reranker()
+
+
+async def apply_rerank(
+    reranker: Reranker,
+    query: str,
+    hits: list[tuple[Knowledge, float]],
+) -> list[tuple[Knowledge, float]]:
+    """cross-encoder 로 후보를 재정렬한다. 반환 점수는 리랭커 관련도(융합 코사인 대체)."""
+    if not hits:
+        return hits
+    docs = [wiki_embedding_text(k) for k, _ in hits]
+    scores = await reranker.rerank(query, docs)
+    ranked = sorted(zip(hits, scores, strict=True), key=lambda item: item[1], reverse=True)
+    return [(k, float(score)) for (k, _cosine), score in ranked]
+
+
+async def hybrid_search(
+    question: str,
+    embedder: Embedder,
+    k: int,
+    *,
+    shelf_patterns: tuple[str, ...] = (),
+    reranker: Reranker | None = None,
+) -> tuple[list[tuple[Knowledge, float]], list[tuple[Knowledge, float]]]:
+    """벡터(의미)+전문검색(정확어) 을 RRF 로 융합하고, 리랭커가 있으면 재정렬한다.
+
+    반환: (top-k 결과, 벡터히트). 벡터히트는 gap 판정(커버리지)용 — 리랭커/융합이 순위를
+    바꿔도 커버리지 신호는 의미유사도(코사인) 원본을 쓴다.
+    """
+    knowledge_repo = PostgresKnowledgeRepository()
+    query_vec = await embedder.embed_query(question)
+    vector_hits = await knowledge_repo.search_semantic(
+        query_vec, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
+    keyword_hits = await knowledge_repo.search_keyword(
+        question, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
+    # 리랭커가 있으면 더 넓은 풀(rerank_pool)을 뽑아 재정렬한 뒤 top-k 로 자른다.
+    pool = get_settings().rerank_pool if reranker is not None else k
+    fused = hybrid_merge(vector_hits, keyword_hits, pool)
+    if reranker is not None and fused:
+        fused = await apply_rerank(reranker, question, fused)
+    return fused[:k], vector_hits
+
+
 async def ask(
     question: str,
     k: int = 5,
     *,
     embedder: Embedder | None = None,
     llm: LLMClient | None = None,
+    reranker: Reranker | None = None,
     log_gap: bool = True,
     shelf_patterns: tuple[str, ...] = (),
 ) -> AskResult:
@@ -473,22 +525,17 @@ async def ask(
     """
     settings = get_settings()
     embedder = embedder or _build_embedder(settings)
-    knowledge_repo = PostgresKnowledgeRepository()
+    reranker = reranker if reranker is not None else _build_reranker(settings)
 
     # 접근제어로 서가 필터된 질의는 gap 신호를 오염시키지 않는다: "다른 팀 서가라 안 보임"과
     # "지식이 없음"을 구분할 수 없고, 제한된 사용자의 질문 원문을 gap 로그에 남기지 않기 위함.
     if shelf_patterns:
         log_gap = False
 
-    # 하이브리드 검색: 벡터(의미) + 전문검색(정확어) 을 RRF 로 융합
-    query_vec = await embedder.embed_query(question)
-    vector_hits = await knowledge_repo.search_semantic(
-        query_vec, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    # 하이브리드(벡터+전문검색) 융합 → (선택) 리랭커 재정렬. 벡터히트는 gap 판정용으로 함께 받는다.
+    hits, vector_hits = await hybrid_search(
+        question, embedder, k, shelf_patterns=shelf_patterns, reranker=reranker
     )
-    keyword_hits = await knowledge_repo.search_keyword(
-        question, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
-    )
-    hits = hybrid_merge(vector_hits, keyword_hits, k)
 
     # gap 판정은 벡터 커버리지(코사인) 기준 — 정확어 히트가 순위를 바꿔도 커버리지는 의미유사도로.
     if log_gap and is_gap(vector_hits):

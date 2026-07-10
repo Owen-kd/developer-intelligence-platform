@@ -35,6 +35,7 @@
 - [x] MCP 의미검색 배선 — `apps/mcp/server.py` 에 `search_wiki` 도구. 로컬 e5 지연로딩. **라이브 확인**(질의 "쿠팡 옵션 수정 안돼요"→PA20-19875 0.83).
 - [x] **하이브리드 검색**(BM25 FTS + 벡터, RRF 융합) — `012_knowledge_fts.sql`(tsv 생성컬럼+GIN), `repository.search_keyword`, `fusion.py`(RRF+hybrid_merge 순수), `/ask`·MCP `search_wiki` 배선. 라이브 A/B: "option_code vendorItemId" 질의에서 벡터단독은 PA20-19864 누락 → 하이브리드 #1. 순수 의미 질의는 회귀 없음. 유닛 5건.
   - 파일럿에서 버그 수정: 위키 LLM `max_tokens` 4096(잘림 방지), `build_wikis` 이슈별 실패 격리(배치 중단 방지), mypy numpy 스텁 skip override.
+- [x] **리랭커**(cross-encoder 2단계 재정렬, [ADR-013](../decisions/ADR-013-cross-encoder-reranker.md), 기본 ON) — `infrastructure/embedding/reranker.py`(Reranker 포트 + FastEmbed jina-v2-multilingual/Fake, 로컬·비용0·지연로딩), `wiki_pipeline.hybrid_search`/`apply_rerank`, MCP `search_wiki` 배선. 융합 상위 `rerank_pool`(20) → 재정렬 → top-k. gap 판정은 벡터 코사인 유지. 유닛 4건. **라이브 A/B**: 정밀 질의("option_code vendorItemId")는 top-1 분리 대폭 개선(0.847≈동점 → 0.109 vs −1.096). 절충: 콜로퀴얼("옵션 수정 안돼요")은 PA20-19864 #1→#3(정답 top-3 유지, 방어가능하나 순위변동). `rerank_enabled=False` 로 즉시 롤백 가능.
 - [x] 상품 도메인 위키 30건 sonnet 실 생성·임베딩 완료(실패 0). **RAG 라이브 검증**: "쿠팡 옵션 수정 안됨" → PA20-19864 0.90 최상위. 품질 양호(근본원인 정직 표기).
   - fastembed `xet` 캐시 권한 크래시 → `HF_HUB_DISABLE_XET=1` 을 embedding 어댑터에서 기본 설정(방어).
 - [x] **24시간 4루프 backbone 배선 완료** → [target-service](../planning/target-service.md).

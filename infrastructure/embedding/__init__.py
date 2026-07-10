@@ -10,5 +10,20 @@ from infrastructure.embedding.client import (
     FastEmbedEmbedder,
     get_embedder,
 )
+from infrastructure.embedding.reranker import (
+    FakeReranker,
+    FastEmbedReranker,
+    Reranker,
+    get_reranker,
+)
 
-__all__ = ["Embedder", "FakeEmbedder", "FastEmbedEmbedder", "get_embedder"]
+__all__ = [
+    "Embedder",
+    "FakeEmbedder",
+    "FastEmbedEmbedder",
+    "FakeReranker",
+    "FastEmbedReranker",
+    "Reranker",
+    "get_embedder",
+    "get_reranker",
+]

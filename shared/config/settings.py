@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     embedding_model: str = "intfloat/multilingual-e5-large"
     embedding_dim: int = 1024
 
+    # Reranker (하이브리드 검색 후 재정렬, 로컬 cross-encoder). 끄면 융합 순위 그대로.
+    rerank_enabled: bool = True
+    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
+    rerank_pool: int = 20  # 리랭크 대상 후보 수(융합 상위 N → 재정렬 → top-k)
+
     # Jira (infrastructure 계층에서만 사용. 읽기 전용 — APR-002)
     jira_base_url: str = ""
     jira_email: str = ""

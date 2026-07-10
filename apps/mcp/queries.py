@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from infrastructure.embedding.reranker import Reranker
 from infrastructure.postgres import connection as pg
 from modules.knowledge.application.fusion import hybrid_merge
-from modules.knowledge.application.wiki_service import WIKI_TYPE
+from modules.knowledge.application.wiki_service import WIKI_TYPE, wiki_embedding_text
 from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 
 
@@ -151,10 +152,13 @@ async def search_wiki_hybrid(
     query_text: str,
     limit: int = 5,
     shelf_patterns: tuple[str, ...] = (),
+    reranker: Reranker | None = None,
+    rerank_pool: int = 20,
 ) -> str:
     """하이브리드 검색: 벡터(의미) + 전문검색(정확어)을 RRF 융합해 위키 top-k 반환.
 
     임베딩 생성은 호출자(서버)의 로컬 임베더 책임 — 이 함수는 검색·조립만 한다(생성/모델 없음).
+    `reranker` 가 주어지면 융합 상위 `rerank_pool` 후보를 cross-encoder 로 재정렬한 뒤 자른다.
     `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 반환한다.
     """
     repo = PostgresKnowledgeRepository()
@@ -164,7 +168,14 @@ async def search_wiki_hybrid(
     keyword_hits = await repo.search_keyword(
         query_text, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
     )
-    hits = hybrid_merge(vector_hits, keyword_hits, limit)
+    pool = rerank_pool if reranker is not None else limit
+    hits = hybrid_merge(vector_hits, keyword_hits, pool)
+    if reranker is not None and hits:
+        docs = [wiki_embedding_text(k) for k, _ in hits]
+        scores = await reranker.rerank(query_text, docs)
+        ranked = sorted(zip(hits, scores, strict=True), key=lambda item: item[1], reverse=True)
+        hits = [(k, float(score)) for (k, _cosine), score in ranked]
+    hits = hits[:limit]
     if not hits:
         return (
             "관련 위키가 없습니다. (아직 위키 미생성일 수 있음 — "
