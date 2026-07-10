@@ -14,6 +14,27 @@ from dataclasses import dataclass
 UNKNOWN = "미상"
 COMMON = "공통"
 
+# 도메인 키(domain-map 레지스트리) → 한글 표시명(폴더·인덱스용)
+DOMAIN_LABELS: dict[str, str] = {
+    "product": "상품",
+    "order": "주문",
+    "stock": "재고",
+    "pay": "결제",
+    "calculate": "정산",
+    "inquiry-as": "문의",
+    "stats": "통계",
+    "delivery": "배송",
+    "user": "회원",
+    "settings": "설정",
+    "work": "작업",
+    UNKNOWN: UNKNOWN,
+}
+
+
+def domain_label(domain: str) -> str:
+    """도메인 키를 한글 표시명으로(없으면 키 그대로)."""
+    return DOMAIN_LABELS.get(domain, domain)
+
 # 도메인: Jira 한글 토큰 → domain-map 레지스트리 키(안정적 식별자)
 _DOMAIN_BY_TOKEN: tuple[tuple[str, str], ...] = (
     ("상품", "product"),

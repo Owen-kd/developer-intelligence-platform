@@ -9,9 +9,12 @@ Obsidian 그래프 뷰에서 지식망이 그대로 보인다.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
+from modules.knowledge.application.classification import domain_label
 from modules.knowledge.domain.entity import Knowledge
+
+_FACET_TAG_AXES = ("domain", "feature_area", "action", "channel", "issue_type", "team")
 
 _FILENAME_RE = re.compile(r"[^0-9A-Za-z가-힣._-]+")
 _JIRA_KEY_RE = re.compile(r"[A-Z][A-Z0-9]+-\d+")
@@ -38,6 +41,18 @@ def vault_filename(name: str) -> str:
     """Obsidian 노트 파일명으로 안전화한다(경로 구분자/특수문자 제거)."""
     safe = _FILENAME_RE.sub("-", name).strip("-")
     return f"{safe or 'wiki'}.md"
+
+
+def _safe_segment(name: str) -> str:
+    """폴더명으로 안전화(경로 구분자/특수문자 제거)."""
+    return _FILENAME_RE.sub("-", name).strip("-") or "미상"
+
+
+def vault_path(facets: Mapping[str, str], jira_key: str) -> str:
+    """facet 기반 저장 경로 `<도메인>/<기능영역>/<JIRA-KEY>.md` (도메인>기능영역 조직화)."""
+    domain = _safe_segment(domain_label(facets.get("domain", "미상")))
+    feature = _safe_segment(facets.get("feature_area", "미상"))
+    return f"{domain}/{feature}/{vault_filename(jira_key)}"
 
 
 def _yaml_scalar(value: str) -> str:
@@ -88,13 +103,23 @@ def to_markdown(
     jira_key: str | None = None,
     related_keys: Sequence[str] = (),
     components: Sequence[str] = (),
+    facets: Mapping[str, str] | None = None,
 ) -> str:
-    """위키 1건을 Obsidian 마크다운 문자열로 변환한다(frontmatter + 본문 + 관련 위키링크)."""
+    """위키 1건을 Obsidian 마크다운 문자열로 변환한다(frontmatter + 본문 + 관련 위키링크).
+
+    `facets`(ADR-015) 가 주어지면 축별 태그(domain/feature/action/channel/type)를 붙여
+    Obsidian 에서 분류축으로 필터·그래프 탐색이 가능하다.
+    """
     key = jira_key or jira_key_of(knowledge) or knowledge.id
     body = knowledge.body if isinstance(knowledge.body, dict) else {}
+    facets = facets or {}
 
     tags = ["dip/wiki", f"trust/{_tag(knowledge.source)}"]
     tags.extend(f"shelf/{_tag(component)}" for component in components if component.strip())
+    for axis in _FACET_TAG_AXES:
+        fval = facets.get(axis, "")
+        if fval and fval not in ("미상", "공통"):
+            tags.append(f"{axis.replace('_', '-')}/{_tag(fval)}")
 
     front = [
         "---",
@@ -109,6 +134,16 @@ def to_markdown(
     ]
 
     lines = [f"# {key} — {knowledge.summary}", ""]
+    if facets:
+        crumb = " > ".join(
+            [
+                domain_label(facets.get("domain", "미상")),
+                facets.get("feature_area", "미상"),
+                facets.get("action", "미상"),
+            ]
+        )
+        lines.append(f"> 분류: {crumb} · 유형: {facets.get('issue_type', '미상')} "
+                     f"· 채널: {facets.get('channel', '공통')}")
     lines.append(f"> 신뢰등급: **{knowledge.source}** · 서가: {', '.join(components) or '-'}")
     lines.append("")
     for field, heading in _SECTIONS:
@@ -128,19 +163,25 @@ def to_markdown(
     return "\n".join(front) + "\n\n" + "\n".join(lines).rstrip() + "\n"
 
 
-def index_markdown(entries: Sequence[tuple[str, str, Sequence[str]]]) -> str:
-    """홈 MOC 노트: (jira_key, summary, components) 목록을 서가별로 묶어 링크한다."""
-    by_shelf: dict[str, list[tuple[str, str]]] = {}
-    for key, summary, components in entries:
-        shelf = components[0] if components else "(미분류)"
-        by_shelf.setdefault(shelf, []).append((key, summary))
+def index_markdown(entries: Sequence[tuple[str, str, Mapping[str, str]]]) -> str:
+    """홈 MOC 노트: (jira_key, summary, facets) 를 **도메인 > 기능영역** 으로 묶어 링크한다."""
+    # {도메인표시명: {기능영역: [(key, summary)]}}
+    tree: dict[str, dict[str, list[tuple[str, str]]]] = {}
+    for key, summary, facets in entries:
+        domain = domain_label(facets.get("domain", "미상"))
+        feature = facets.get("feature_area", "미상")
+        tree.setdefault(domain, {}).setdefault(feature, []).append((key, summary))
 
     lines = ["---", "tags: [dip/index]", "---", "", "# DIP 지식 도서관", ""]
-    lines.append(f"총 {len(entries)}건 · 서가 {len(by_shelf)}개")
+    lines.append(f"총 {len(entries)}건 · 도메인 {len(tree)}개 (분류: 도메인 > 기능영역)")
     lines.append("")
-    for shelf in sorted(by_shelf):
-        items = by_shelf[shelf]
-        lines.append(f"## {shelf} ({len(items)})")
-        lines.extend(f"- [[{key}]] — {summary}" for key, summary in items)
+    for domain in sorted(tree):
+        features = tree[domain]
+        total = sum(len(v) for v in features.values())
+        lines.append(f"## {domain} ({total})")
+        for feature in sorted(features):
+            items = features[feature]
+            lines.append(f"### {feature} ({len(items)})")
+            lines.extend(f"- [[{key}]] — {summary}" for key, summary in items)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

@@ -133,24 +133,40 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
 
     async def list_wikis_with_meta(
         self,
-    ) -> list[tuple[Knowledge, str | None, tuple[str, ...]]]:
-        """모든 위키 + (jira_key, 서가components) 를 조회한다 — Obsidian export 용."""
+    ) -> list[tuple[Knowledge, str | None, tuple[str, ...], dict[str, str]]]:
+        """모든 위키 + (jira_key, 서가components, facet 6축) 를 조회한다 — Obsidian export 용.
+
+        facet(issue_facets, ADR-015)으로 도메인/기능영역 조직화(LEFT JOIN — 없으면 미상).
+        """
         query = text(
             """
             SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
-                   k.created_at, i.jira_key, i.components
-            FROM knowledge k LEFT JOIN issues i ON i.id = k.issue_id
+                   k.created_at, i.jira_key, i.components,
+                   f.domain, f.feature_area, f.action, f.channel,
+                   f.issue_type, f.team, f.area
+            FROM knowledge k
+            LEFT JOIN issues i ON i.id = k.issue_id
+            LEFT JOIN issue_facets f ON f.issue_id = k.issue_id
             WHERE k.type = 'wiki'
-            ORDER BY i.jira_key
+            ORDER BY f.domain, f.feature_area, i.jira_key
             """
         )
         async with pg.get_engine().connect() as conn:
             rows = (await conn.execute(query)).all()
-        result: list[tuple[Knowledge, str | None, tuple[str, ...]]] = []
+        result: list[tuple[Knowledge, str | None, tuple[str, ...], dict[str, str]]] = []
         for row in rows:
             jira_key = row.jira_key if row.jira_key else None
             components = tuple(row.components) if row.components else ()
-            result.append((_row_to_knowledge(row), jira_key, components))
+            facets = {
+                "domain": row.domain or "미상",
+                "feature_area": row.feature_area or "미상",
+                "action": row.action or "미상",
+                "channel": row.channel or "공통",
+                "issue_type": row.issue_type or "미상",
+                "team": row.team or "미상",
+                "area": row.area or "미상",
+            }
+            result.append((_row_to_knowledge(row), jira_key, components, facets))
         return result
 
     async def related_wiki_keys_by_issue(self) -> dict[str, list[str]]:

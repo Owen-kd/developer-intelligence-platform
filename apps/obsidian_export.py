@@ -17,7 +17,7 @@ from modules.knowledge.infrastructure.repository import PostgresKnowledgeReposit
 from modules.knowledge.presentation.obsidian import (
     index_markdown,
     to_markdown,
-    vault_filename,
+    vault_path,
 )
 from shared.logger import get_logger
 
@@ -31,6 +31,16 @@ class ExportResult:
     skipped: int  # jira_key 없어 건너뛴 수(파일명 불안정 방지)
 
 
+def _clean_generated(out: Path) -> None:
+    """기존 생성물(.md)과 빈 폴더를 지운다 — 파생 뷰라 재조직 시 잔여물 방지(.obsidian 보존)."""
+    for md in out.rglob("*.md"):
+        if ".obsidian" not in md.parts:
+            md.unlink()
+    for path in sorted(out.rglob("*"), reverse=True):  # 깊은 곳부터 빈 폴더 제거
+        if path.is_dir() and ".obsidian" not in path.parts and not any(path.iterdir()):
+            path.rmdir()
+
+
 async def export_vault(out_dir: str) -> ExportResult:
     """모든 위키를 out_dir 아래 `<JIRA-KEY>.md` + `index.md`(홈 MOC) 로 내보낸다."""
     repo = PostgresKnowledgeRepository()
@@ -39,11 +49,12 @@ async def export_vault(out_dir: str) -> ExportResult:
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    _clean_generated(out)  # 파생 뷰 — 기존 생성물 정리 후 재작성(idempotent, .obsidian 보존)
 
     written = 0
     skipped = 0
-    index_entries: list[tuple[str, str, tuple[str, ...]]] = []
-    for knowledge, jira_key, components in wikis:
+    index_entries: list[tuple[str, str, dict[str, str]]] = []
+    for knowledge, jira_key, components, facets in wikis:
         if not jira_key:
             skipped += 1  # 파일명/링크 안정성을 위해 Jira 키 없는 위키는 건너뛴다
             continue
@@ -53,9 +64,12 @@ async def export_vault(out_dir: str) -> ExportResult:
             jira_key=jira_key,
             related_keys=related_keys,
             components=components,
+            facets=facets,
         )
-        (out / vault_filename(jira_key)).write_text(markdown, encoding="utf-8")
-        index_entries.append((jira_key, knowledge.summary, components))
+        note_path = out / vault_path(facets, jira_key)  # <도메인>/<기능영역>/<KEY>.md
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(markdown, encoding="utf-8")
+        index_entries.append((jira_key, knowledge.summary, facets))
         written += 1
 
     (out / "index.md").write_text(index_markdown(index_entries), encoding="utf-8")
