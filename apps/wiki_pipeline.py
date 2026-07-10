@@ -29,6 +29,7 @@ from infrastructure.postgres.event_store import PostgresEventStore
 from modules.jira.application.service import JiraService, SyncResult
 from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
+from modules.knowledge.application.fusion import hybrid_merge
 from modules.knowledge.application.gap_analysis import GapRecord
 from modules.knowledge.application.refinement import assess
 from modules.knowledge.application.wiki_service import (
@@ -479,14 +480,20 @@ async def ask(
     if shelf_patterns:
         log_gap = False
 
+    # 하이브리드 검색: 벡터(의미) + 전문검색(정확어) 을 RRF 로 융합
     query_vec = await embedder.embed_query(question)
-    hits = await knowledge_repo.search_semantic(
-        query_vec, limit=k, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    vector_hits = await knowledge_repo.search_semantic(
+        query_vec, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
     )
+    keyword_hits = await knowledge_repo.search_keyword(
+        question, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
+    hits = hybrid_merge(vector_hits, keyword_hits, k)
 
-    if log_gap and is_gap(hits):
+    # gap 판정은 벡터 커버리지(코사인) 기준 — 정확어 히트가 순위를 바꿔도 커버리지는 의미유사도로.
+    if log_gap and is_gap(vector_hits):
         try:
-            await _record_gap(question, hits)
+            await _record_gap(question, vector_hits)
         except Exception as exc:  # gap 로깅 실패가 답변을 막지 않는다
             _logger.warning("gap.log_failed", error=str(exc))
 

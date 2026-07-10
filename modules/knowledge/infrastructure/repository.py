@@ -171,6 +171,45 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             rows = (await conn.execute(query, params)).all()
         return [(_row_to_knowledge(row), float(row.score)) for row in rows]
 
+    async def search_keyword(
+        self,
+        query_text: str,
+        limit: int = 20,
+        types: tuple[str, ...] = (),
+        shelf_patterns: tuple[str, ...] = (),
+    ) -> list[tuple[Knowledge, float]]:
+        """전문검색(FTS) — 정확 토큰(식별자/키워드) 매칭. ts_rank 내림차순 (하이브리드 BM25 arm).
+
+        `types`/`shelf_patterns` 는 search_semantic 과 동일 의미. 빈 질의면 빈 결과.
+        """
+        if not query_text.strip():
+            return []
+        type_cond = "AND k.type = ANY(:types)" if types else ""
+        shelf_cond = (
+            "AND EXISTS (SELECT 1 FROM issues i, "
+            "jsonb_array_elements_text(i.components) s "
+            "WHERE i.id = k.issue_id AND s ILIKE ANY(:shelfpats))"
+            if shelf_patterns
+            else ""
+        )
+        query = text(
+            f"""
+            SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
+                   k.created_at, ts_rank(k.tsv, q) AS score
+            FROM knowledge k, websearch_to_tsquery('simple', :q) AS q
+            WHERE k.tsv @@ q {type_cond} {shelf_cond}
+            ORDER BY score DESC LIMIT :lim
+            """
+        )
+        params: dict[str, object] = {"q": query_text, "lim": limit}
+        if types:
+            params["types"] = list(types)
+        if shelf_patterns:
+            params["shelfpats"] = list(shelf_patterns)
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query, params)).all()
+        return [(_row_to_knowledge(row), float(row.score)) for row in rows]
+
 
 class PostgresIssueSourceReader(IssueSourceReader):
     """issues/comments/commits/events 를 조인해 스냅샷을 조립한다."""

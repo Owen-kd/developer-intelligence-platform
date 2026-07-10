@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import text
 
 from infrastructure.postgres import connection as pg
+from modules.knowledge.application.fusion import hybrid_merge
 from modules.knowledge.application.wiki_service import WIKI_TYPE
 from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 
@@ -145,24 +146,31 @@ async def issue_detail(jira_key: str, shelf_patterns: tuple[str, ...] = ()) -> s
     return "\n".join(out)
 
 
-async def search_wiki_by_vector(
-    embedding: list[float], limit: int = 5, shelf_patterns: tuple[str, ...] = ()
+async def search_wiki_hybrid(
+    embedding: list[float],
+    query_text: str,
+    limit: int = 5,
+    shelf_patterns: tuple[str, ...] = (),
 ) -> str:
-    """질의 임베딩과 의미가 유사한 위키를 top-k 로 반환한다(벡터 RAG, 키워드 아님).
+    """하이브리드 검색: 벡터(의미) + 전문검색(정확어)을 RRF 융합해 위키 top-k 반환.
 
     임베딩 생성은 호출자(서버)의 로컬 임베더 책임 — 이 함수는 검색·조립만 한다(생성/모델 없음).
     `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 반환한다.
     """
     repo = PostgresKnowledgeRepository()
-    hits = await repo.search_semantic(
-        embedding, limit=limit, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    vector_hits = await repo.search_semantic(
+        embedding, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
     )
+    keyword_hits = await repo.search_keyword(
+        query_text, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+    )
+    hits = hybrid_merge(vector_hits, keyword_hits, limit)
     if not hits:
         return (
             "관련 위키가 없습니다. (아직 위키 미생성일 수 있음 — "
             "`python -m apps.cli.wiki build` 로 생성)"
         )
-    lines = [f"# 의미검색: 유사 위키 {len(hits)}건\n"]
+    lines = [f"# 하이브리드 검색: 유사 위키 {len(hits)}건\n"]
     for knowledge, score in hits:
         body = knowledge.body if isinstance(knowledge.body, dict) else {}
         jira = next(

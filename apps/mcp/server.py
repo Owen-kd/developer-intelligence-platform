@@ -62,16 +62,16 @@ async def get_expert_knowledge(query: str = "", limit: int = 5) -> str:
 
 @mcp.tool()
 async def search_wiki(query: str, limit: int = 5) -> str:
-    """자연어 질문으로 의미가 유사한 위키(자동 생성 지식)를 검색한다 — 벡터 RAG.
+    """자연어 질문으로 유사 위키를 검색한다 — 하이브리드(의미 + 정확어) RAG.
 
-    키워드 일치가 아니라 의미 유사도 기반이라, 표현이 달라도 찾는다.
+    의미 유사도(벡터)와 정확 식별자(전문검색: option_code/GTIN/쿠팡 등)를 RRF 로 융합.
     예: query="쿠팡에서 옵션이 수정이 안돼요" → 관련 위키를 증상·근본원인·해결과 함께 반환.
     """
     patterns = _access_shelf_patterns()
     if patterns is not None and not patterns:
         return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가). 관리자에게 서가 권한을 요청하세요."
     embedding = await get_embedder().embed_query(query)
-    return await queries.search_wiki_by_vector(embedding, limit, patterns or ())
+    return await queries.search_wiki_hybrid(embedding, query, limit, patterns or ())
 
 
 @mcp.tool()

@@ -32,7 +32,8 @@
     `modules/knowledge/application/wiki_service.py`(+`prompts/knowledge/wiki.md`, `ask.md`), `apps/wiki_pipeline.py` + `apps/cli/wiki.py`.
   - 검증: ruff/mypy strict(193)/pytest(64) 통과 + **라이브 pgvector 스모크 통과**(build→embed→cosine top-k, 최상위=PA20-19864).
   - docker: postgres 이미지 → `pgvector/pgvector:pg16`(명명 볼륨 유지, 5000건 보존). `fastembed` 의존성 추가.
-- [x] MCP 의미검색 배선 — `apps/mcp/server.py` 에 `search_wiki`(벡터 RAG) 도구 추가(+`queries.search_wiki_by_vector`). 로컬 e5 지연로딩. **라이브 확인**(질의 "쿠팡 옵션 수정 안돼요"→PA20-19875 0.83).
+- [x] MCP 의미검색 배선 — `apps/mcp/server.py` 에 `search_wiki` 도구. 로컬 e5 지연로딩. **라이브 확인**(질의 "쿠팡 옵션 수정 안돼요"→PA20-19875 0.83).
+- [x] **하이브리드 검색**(BM25 FTS + 벡터, RRF 융합) — `012_knowledge_fts.sql`(tsv 생성컬럼+GIN), `repository.search_keyword`, `fusion.py`(RRF+hybrid_merge 순수), `/ask`·MCP `search_wiki` 배선. 라이브 A/B: "option_code vendorItemId" 질의에서 벡터단독은 PA20-19864 누락 → 하이브리드 #1. 순수 의미 질의는 회귀 없음. 유닛 5건.
   - 파일럿에서 버그 수정: 위키 LLM `max_tokens` 4096(잘림 방지), `build_wikis` 이슈별 실패 격리(배치 중단 방지), mypy numpy 스텁 skip override.
 - [x] 상품 도메인 위키 30건 sonnet 실 생성·임베딩 완료(실패 0). **RAG 라이브 검증**: "쿠팡 옵션 수정 안됨" → PA20-19864 0.90 최상위. 품질 양호(근본원인 정직 표기).
   - fastembed `xet` 캐시 권한 크래시 → `HF_HUB_DISABLE_XET=1` 을 embedding 어댑터에서 기본 설정(방어).
