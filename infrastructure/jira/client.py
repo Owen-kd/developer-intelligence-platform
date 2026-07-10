@@ -188,17 +188,22 @@ class HttpJiraClient(JiraClient):
             raise ValueError("Jira 설정이 비어 있습니다 (.env JIRA_*).")
         self._base = base_url.rstrip("/")
         self._auth = httpx.BasicAuth(email, api_token)
-        self._project_key = project_key
+        # 다중 프로젝트 지원: JIRA_PROJECT_KEY 를 콤마로 나눈다(예: "PA20,ENG").
+        self._projects = [key.strip() for key in project_key.split(",") if key.strip()]
         self._max = max_issues
+
+    def _project_clause(self) -> str:
+        """단일이면 `project=KEY`, 여럿이면 `project IN (K1, K2)`."""
+        if len(self._projects) == 1:
+            return f"project={self._projects[0]}"
+        return f"project IN ({', '.join(self._projects)})"
 
     def _build_jql(self, updated_since: str | None) -> str:
         """증분(updated_since)이면 그 이후 변경분을 오래된 순으로, 아니면 최신 순."""
+        project = self._project_clause()
         if updated_since:
-            return (
-                f'project={self._project_key} AND updated >= "{updated_since}" '
-                "ORDER BY updated ASC"
-            )
-        return f"project={self._project_key} ORDER BY created DESC"
+            return f'{project} AND updated >= "{updated_since}" ORDER BY updated ASC'
+        return f"{project} ORDER BY created DESC"
 
     async def fetch_issues(self, updated_since: str | None = None) -> list[JiraIssue]:
         """max_issues 에 도달하거나 마지막 페이지까지 nextPageToken 으로 순회한다."""

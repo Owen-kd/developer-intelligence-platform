@@ -26,6 +26,26 @@ def test_incremental_jql_filters_updated_and_orders_asc() -> None:
     assert jql.startswith("project=PA20 AND")
 
 
+def _multi_client() -> HttpJiraClient:
+    return HttpJiraClient(
+        base_url="https://x.atlassian.net",
+        email="e@x.com",
+        api_token="tok",
+        project_key="PA20, ENG",  # 콤마 + 공백 허용
+        max_issues=100,
+    )
+
+
+def test_multi_project_uses_in_clause() -> None:
+    assert _multi_client()._build_jql(None) == "project IN (PA20, ENG) ORDER BY created DESC"
+
+
+def test_multi_project_incremental() -> None:
+    jql = _multi_client()._build_jql("2026-07-08 02:00")
+    assert jql.startswith("project IN (PA20, ENG) AND")
+    assert "ORDER BY updated ASC" in jql
+
+
 async def test_fake_client_ignores_cursor() -> None:
     client = FakeJiraClient()
     full = await client.fetch_issues()
