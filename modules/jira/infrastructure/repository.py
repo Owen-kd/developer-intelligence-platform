@@ -193,3 +193,53 @@ class PostgresIssueRepository(IssueRepository):
             )
             for row in rows
         ]
+
+    async def iter_for_classification(
+        self,
+    ) -> list[tuple[str, str, str, list[str], list[str]]]:
+        """분류 입력(id, jira_key, summary, components, labels)을 전량 조회한다 — Facet 부트스트랩.
+
+        knowledge 의 순수 분류기가 소비할 원시 필드만 돌려준다(모듈 간 타입 결합 회피).
+        """
+        async with pg.get_engine().connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT id, jira_key, COALESCE(summary,'') AS summary, "
+                        "components, labels FROM issues"
+                    )
+                )
+            ).all()
+        return [
+            (
+                str(row.id),
+                row.jira_key,
+                row.summary,
+                list(row.components or []),
+                list(row.labels or []),
+            )
+            for row in rows
+        ]
+
+    async def save_facets(
+        self, issue_id: str, facets: dict[str, str], method: str = "rule"
+    ) -> None:
+        """이슈 분류(6축)를 upsert 한다 — 원본 불변, 재분류는 덮어쓰기(ADR-015)."""
+        query = text(
+            """
+            INSERT INTO issue_facets
+                (issue_id, domain, feature_area, action, channel,
+                 issue_type, team, area, method, classified_at)
+            VALUES
+                (:iid, :domain, :feature_area, :action, :channel,
+                 :issue_type, :team, :area, :method, now())
+            ON CONFLICT (issue_id) DO UPDATE SET
+                domain = EXCLUDED.domain, feature_area = EXCLUDED.feature_area,
+                action = EXCLUDED.action, channel = EXCLUDED.channel,
+                issue_type = EXCLUDED.issue_type, team = EXCLUDED.team,
+                area = EXCLUDED.area, method = EXCLUDED.method,
+                classified_at = EXCLUDED.classified_at
+            """
+        )
+        async with pg.get_engine().begin() as conn:
+            await conn.execute(query, {"iid": issue_id, "method": method, **facets})
