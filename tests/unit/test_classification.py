@@ -5,7 +5,9 @@ from __future__ import annotations
 from modules.knowledge.application.classification import (
     COMMON,
     UNKNOWN,
+    Facets,
     classify_rule,
+    validate_llm_facets,
 )
 
 
@@ -56,3 +58,20 @@ def test_unknown_when_no_signal() -> None:
     assert f.issue_type == "문의"
     assert f.feature_area == UNKNOWN  # 규칙으로 못 채움 → LLM 대상
     assert f.channel == COMMON
+
+
+def test_validate_llm_fills_only_missing_axes() -> None:
+    base = Facets(domain="product", feature_area=UNKNOWN, action=UNKNOWN, channel=COMMON)
+    raw = {"domain": "order", "feature_area": "matching", "action": "자동매칭", "channel": "쿠팡"}
+    out = validate_llm_facets(raw, base)
+    assert out.domain == "product"  # 규칙이 채운 축은 LLM 이 못 덮음
+    assert out.feature_area == "matching"  # 미상이던 축만 보강
+    assert out.action == "자동매칭"
+    assert out.channel == "쿠팡"
+
+
+def test_validate_llm_rejects_out_of_vocab() -> None:
+    base = Facets()
+    raw = {"domain": "결제도메인", "feature_area": "새기능", "action": "짓기", "channel": "네이버"}
+    out = validate_llm_facets(raw, base)
+    assert out == base  # 통제 어휘 밖 값은 전부 무시(자유생성 방지)

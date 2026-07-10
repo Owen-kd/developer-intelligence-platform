@@ -1,7 +1,8 @@
 """Facet 분류 CLI — ADR-015.
 
 사용:
-    python -m apps.cli.classify bootstrap    # 전 이슈 규칙 분류 → issue_facets 적재(LLM 0)
+    python -m apps.cli.classify bootstrap        # 전 이슈 규칙 분류 → issue_facets 적재(LLM 0)
+    python -m apps.cli.classify enrich [--limit N]  # 규칙이 미상인 축을 LLM 으로 보강(비용 발생)
 
 전제: `docker compose up -d` + `python -m apps.cli.migrate`(013 포함).
 """
@@ -12,6 +13,7 @@ import asyncio
 import sys
 
 from apps.classify_bootstrap import classify_all
+from apps.classify_enrich import enrich_missing
 from infrastructure.postgres import connection as pg
 
 
@@ -23,12 +25,23 @@ async def _bootstrap() -> None:
         print(f"  {field:12}: {pct:5.1f}%  ({count})")
 
 
+async def _enrich(limit: int | None) -> None:
+    result = await enrich_missing(limit=limit)
+    print(
+        f"[enrich] 대상 {result.targets}건 · 보강됨 {result.enriched} · 실패 {result.failed} (LLM)"
+    )
+
+
 async def _main(argv: list[str]) -> int:
-    if not argv or argv[0] != "bootstrap":
-        print("사용법: classify bootstrap", file=sys.stderr)
+    if not argv or argv[0] not in ("bootstrap", "enrich"):
+        print("사용법: classify bootstrap | classify enrich [--limit N]", file=sys.stderr)
         return 2
     try:
-        await _bootstrap()
+        if argv[0] == "bootstrap":
+            await _bootstrap()
+        else:
+            limit = int(argv[argv.index("--limit") + 1]) if "--limit" in argv else None
+            await _enrich(limit)
     finally:
         await pg.dispose()
     return 0

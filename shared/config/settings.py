@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
     llm_max_tokens: int = 1024
+    # Facet LLM 보강(ADR-015 2단계)은 단순 분류라 저가 모델로 충분 — 비용 최소화.
+    classify_model: str = "claude-haiku-4-5"
 
     # Embedding (로컬, infrastructure/embedding 에서만 사용 — ADR-009)
     # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.
