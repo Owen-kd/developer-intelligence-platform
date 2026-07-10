@@ -131,6 +131,21 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             rows = (await conn.execute(query, {"iid": issue_id})).all()
         return [(_row_to_knowledge(row), float(row.score)) for row in rows]
 
+    async def embeddings_for(self, ids: list[str]) -> dict[str, list[float]]:
+        """주어진 지식 id 들의 임베딩 벡터를 조회한다(다양화 MMR 등 후처리용).
+
+        미임베딩 행은 결과에서 빠진다(호출자가 없으면 sim=0 취급).
+        """
+        if not ids:
+            return {}
+        query = text(
+            "SELECT id, embedding::text AS emb FROM knowledge "
+            "WHERE id = ANY(:ids) AND embedding IS NOT NULL"
+        )
+        async with pg.get_engine().connect() as conn:
+            rows = (await conn.execute(query, {"ids": ids})).all()
+        return {str(row.id): _parse_vector(row.emb) for row in rows}
+
     async def search_semantic(
         self,
         embedding: list[float],
@@ -277,6 +292,14 @@ class PostgresIssueSourceReader(IssueSourceReader):
 def _vector_literal(embedding: list[float]) -> str:
     """float 리스트를 pgvector 텍스트 리터럴 '[v1,v2,...]' 로 만든다(CAST ... AS vector 용)."""
     return "[" + ",".join(repr(float(value)) for value in embedding) + "]"
+
+
+def _parse_vector(literal: str) -> list[float]:
+    """pgvector 텍스트 리터럴 '[v1,v2,...]' 를 float 리스트로 되돌린다(embedding::text)."""
+    inner = literal.strip().strip("[]")
+    if not inner:
+        return []
+    return [float(part) for part in inner.split(",")]
 
 
 def _row_to_knowledge(row: object) -> Knowledge:

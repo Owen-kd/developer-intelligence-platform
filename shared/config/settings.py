@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     # Reranker (하이브리드 검색 후 재정렬, 로컬 cross-encoder). 끄면 융합 순위 그대로.
     rerank_enabled: bool = True
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
-    rerank_pool: int = 20  # 리랭크 대상 후보 수(융합 상위 N → 재정렬 → top-k)
+    rerank_pool: int = 20  # 2단계 후보 풀(융합 상위 N → 재정렬/다양화 → top-k)
+
+    # 검색 결과 다양화 (MMR — 같은 주제 중복 노출 억제, 비파괴). 끄면 순위 그대로 top-k.
+    diversify_enabled: bool = True
+    diversify_lambda: float = 0.7  # 1.0=순수 관련도, 0.0=순수 다양성(관련도↔다양성 절충)
 
     # Jira (infrastructure 계층에서만 사용. 읽기 전용 — APR-002)
     jira_base_url: str = ""

@@ -30,6 +30,7 @@ from infrastructure.postgres.event_store import PostgresEventStore
 from modules.jira.application.service import JiraService, SyncResult
 from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
+from modules.knowledge.application.diversify import mmr_select
 from modules.knowledge.application.fusion import hybrid_merge
 from modules.knowledge.application.gap_analysis import GapRecord
 from modules.knowledge.application.refinement import assess
@@ -486,12 +487,16 @@ async def hybrid_search(
     *,
     shelf_patterns: tuple[str, ...] = (),
     reranker: Reranker | None = None,
+    diversify: bool | None = None,
 ) -> tuple[list[tuple[Knowledge, float]], list[tuple[Knowledge, float]]]:
-    """벡터(의미)+전문검색(정확어) 을 RRF 로 융합하고, 리랭커가 있으면 재정렬한다.
+    """벡터+전문검색 융합 → (선택)리랭커 재정렬 → (선택)MMR 다양화. (top-k, 벡터히트) 반환.
 
-    반환: (top-k 결과, 벡터히트). 벡터히트는 gap 판정(커버리지)용 — 리랭커/융합이 순위를
-    바꿔도 커버리지 신호는 의미유사도(코사인) 원본을 쓴다.
+    벡터히트는 gap 판정(커버리지)용 — 리랭커/융합/다양화가 순위를 바꿔도 커버리지 신호는
+    의미유사도(코사인) 원본을 쓴다. `diversify` 미지정 시 설정(diversify_enabled)을 따른다.
     """
+    settings = get_settings()
+    if diversify is None:
+        diversify = settings.diversify_enabled
     knowledge_repo = PostgresKnowledgeRepository()
     query_vec = await embedder.embed_query(question)
     vector_hits = await knowledge_repo.search_semantic(
@@ -500,11 +505,15 @@ async def hybrid_search(
     keyword_hits = await knowledge_repo.search_keyword(
         question, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
     )
-    # 리랭커가 있으면 더 넓은 풀(rerank_pool)을 뽑아 재정렬한 뒤 top-k 로 자른다.
-    pool = get_settings().rerank_pool if reranker is not None else k
+    # 리랭커/다양화가 있으면 더 넓은 풀(rerank_pool)을 뽑아 후처리한 뒤 top-k 로 자른다.
+    want_pool = reranker is not None or diversify
+    pool = settings.rerank_pool if want_pool else k
     fused = hybrid_merge(vector_hits, keyword_hits, pool)
     if reranker is not None and fused:
         fused = await apply_rerank(reranker, question, fused)
+    if diversify and len(fused) > k:
+        embeddings = await knowledge_repo.embeddings_for([kn.id for kn, _ in fused])
+        fused = mmr_select(fused, embeddings, k, settings.diversify_lambda)
     return fused[:k], vector_hits
 
 

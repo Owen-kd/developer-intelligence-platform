@@ -79,9 +79,17 @@ async def search_wiki(query: str, limit: int = 5) -> str:
     patterns = _access_shelf_patterns()
     if patterns is not None and not patterns:
         return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가). 관리자에게 서가 권한을 요청하세요."
+    settings = get_settings()
     embedding = await get_embedder().embed_query(query)
     return await queries.search_wiki_hybrid(
-        embedding, query, limit, patterns or (), reranker=_reranker()
+        embedding,
+        query,
+        limit,
+        patterns or (),
+        reranker=_reranker(),
+        rerank_pool=settings.rerank_pool,
+        diversify=settings.diversify_enabled,
+        diversify_lambda=settings.diversify_lambda,
     )
 
 
