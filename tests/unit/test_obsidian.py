@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 
 from modules.knowledge.domain.entity import Knowledge
 from modules.knowledge.presentation.obsidian import (
+    domain_moc_markdown,
     index_markdown,
     jira_key_of,
+    moc_notes,
     to_markdown,
     vault_filename,
     vault_path,
@@ -93,16 +95,32 @@ def test_to_markdown_related_wikilinks_dedup_and_self_excluded() -> None:
     assert md.count("[[PA20-19780]]") == 1  # related_keys + body 중복 → 1회
 
 
-def test_index_markdown_groups_by_domain_feature() -> None:
-    md = index_markdown(
-        [
-            ("PA20-1", "옵션 오류", {"domain": "product", "feature_area": "option"}),
-            ("PA20-2", "매칭", {"domain": "product", "feature_area": "matching"}),
-            ("ENG-1", "주문", {"domain": "order", "feature_area": "미상"}),
-        ]
-    )
+_INDEX_ENTRIES = [
+    ("PA20-1", "옵션 오류", {"domain": "product", "feature_area": "option"}),
+    ("PA20-2", "매칭", {"domain": "product", "feature_area": "matching"}),
+    ("ENG-1", "주문", {"domain": "order", "feature_area": "미상"}),
+]
+
+
+def test_index_markdown_links_only_to_domain_mocs() -> None:
+    """루트 index 는 이슈를 직접 링크하지 않고 도메인 MOC 노트로만 링크한다(별 모양 방지)."""
+    md = index_markdown(_INDEX_ENTRIES)
     assert "총 3건 · 도메인 2개" in md
-    assert "## 상품 (2)" in md  # product → 상품, 2건
-    assert "### option (1)" in md and "### matching (1)" in md
-    assert "## 주문 (1)" in md
+    assert "[[상품]]" in md and "(2건)" in md  # product → 상품 MOC, 2건
+    assert "[[주문]]" in md
+    assert "[[PA20-1]]" not in md  # 이슈는 index 에서 직접 링크하지 않음 → 계층 유지
+
+
+def test_domain_moc_groups_issues_by_feature() -> None:
+    md = domain_moc_markdown("상품", _INDEX_ENTRIES[:2])
+    assert "# 상품" in md
+    assert "[[index]]" in md  # 상위(index) 로 되짚는 링크
+    assert "## option (1)" in md and "## matching (1)" in md
     assert "- [[PA20-1]] — 옵션 오류" in md
+
+
+def test_moc_notes_emits_root_index_and_domain_notes() -> None:
+    notes = dict(moc_notes(_INDEX_ENTRIES))
+    assert set(notes) == {"index.md", "상품.md", "주문.md"}
+    assert "[[상품]]" in notes["index.md"]
+    assert "[[PA20-1]]" in notes["상품.md"]  # 이슈 링크는 도메인 MOC 안에

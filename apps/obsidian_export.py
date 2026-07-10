@@ -15,7 +15,7 @@ from pathlib import Path
 
 from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 from modules.knowledge.presentation.obsidian import (
-    index_markdown,
+    moc_notes,
     to_markdown,
     vault_path,
 )
@@ -72,6 +72,8 @@ async def export_vault(out_dir: str) -> ExportResult:
         index_entries.append((jira_key, knowledge.summary, facets))
         written += 1
 
-    (out / "index.md").write_text(index_markdown(index_entries), encoding="utf-8")
+    # 홈 계층: index(루트) → 도메인 MOC → 이슈. 그래프가 별 모양이 아니라 계층으로 뻗도록.
+    for filename, content in moc_notes(index_entries):
+        (out / filename).write_text(content, encoding="utf-8")
     _logger.info("obsidian.exported", written=written, skipped=skipped, out_dir=str(out))
     return ExportResult(out_dir=str(out), written=written, skipped=skipped)

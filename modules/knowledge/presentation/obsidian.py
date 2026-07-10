@@ -163,25 +163,68 @@ def to_markdown(
     return "\n".join(front) + "\n\n" + "\n".join(lines).rstrip() + "\n"
 
 
-def index_markdown(entries: Sequence[tuple[str, str, Mapping[str, str]]]) -> str:
-    """홈 MOC 노트: (jira_key, summary, facets) 를 **도메인 > 기능영역** 으로 묶어 링크한다."""
-    # {도메인표시명: {기능영역: [(key, summary)]}}
-    tree: dict[str, dict[str, list[tuple[str, str]]]] = {}
-    for key, summary, facets in entries:
-        domain = domain_label(facets.get("domain", "미상"))
-        feature = facets.get("feature_area", "미상")
-        tree.setdefault(domain, {}).setdefault(feature, []).append((key, summary))
+Entry = tuple[str, str, Mapping[str, str]]
 
+
+def domain_moc_stem(domain_display: str) -> str:
+    """도메인 MOC 노트의 파일 stem(= 그래프 노드 이름). 위키링크 `[[stem]]` 대상과 일치해야 한다."""
+    return _safe_segment(domain_display)
+
+
+def _group_by_domain(entries: Sequence[Entry]) -> dict[str, list[Entry]]:
+    """엔트리를 도메인 표시명으로 묶는다(정렬 안정성 위해 삽입 순서 보존)."""
+    by_domain: dict[str, list[Entry]] = {}
+    for entry in entries:
+        _key, _summary, facets = entry
+        domain = domain_label(facets.get("domain", "미상"))
+        by_domain.setdefault(domain, []).append(entry)
+    return by_domain
+
+
+def index_markdown(entries: Sequence[Entry]) -> str:
+    """루트 홈 MOC: **도메인 MOC 노트로만** 링크한다.
+
+    그래프에서 index → 도메인(상품·미상 …) → 이슈 로 뻗게 하려면, index 가 이슈를 직접
+    링크하면 안 된다(그러면 별 모양). 도메인 MOC 노트를 경유해 계층을 만든다.
+    """
+    by_domain = _group_by_domain(entries)
     lines = ["---", "tags: [dip/index]", "---", "", "# DIP 지식 도서관", ""]
-    lines.append(f"총 {len(entries)}건 · 도메인 {len(tree)}개 (분류: 도메인 > 기능영역)")
+    lines.append(f"총 {len(entries)}건 · 도메인 {len(by_domain)}개 (분류: 도메인 > 기능영역)")
     lines.append("")
-    for domain in sorted(tree):
-        features = tree[domain]
-        total = sum(len(v) for v in features.values())
-        lines.append(f"## {domain} ({total})")
-        for feature in sorted(features):
-            items = features[feature]
-            lines.append(f"### {feature} ({len(items)})")
-            lines.extend(f"- [[{key}]] — {summary}" for key, summary in items)
+    for domain in sorted(by_domain):
+        stem = domain_moc_stem(domain)
+        lines.append(f"- [[{stem}]] — {domain} ({len(by_domain[domain])}건)")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def domain_moc_markdown(domain_display: str, entries: Sequence[Entry]) -> str:
+    """도메인 MOC 노트: 해당 도메인 이슈를 **기능영역 헤딩**으로 묶어 `[[KEY]]` 로 링크한다.
+
+    그래프에서 이 노트는 index 와 이슈 사이의 중간 노드가 된다(index → 이 노트 → 이슈).
+    """
+    features: dict[str, list[tuple[str, str]]] = {}
+    for key, summary, facets in entries:
+        feature = facets.get("feature_area", "미상")
+        features.setdefault(feature, []).append((key, summary))
+
+    lines = ["---", "tags: [dip/moc, dip/domain]", "---", "", f"# {domain_display}", ""]
+    lines.append(f"[[index]] · 총 {len(entries)}건 · 기능영역 {len(features)}개")
+    lines.append("")
+    for feature in sorted(features):
+        items = features[feature]
+        lines.append(f"## {feature} ({len(items)})")
+        lines.extend(f"- [[{key}]] — {summary}" for key, summary in items)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def moc_notes(entries: Sequence[Entry]) -> list[tuple[str, str]]:
+    """볼트 홈 계층 노트를 (파일명, 마크다운) 목록으로 만든다.
+
+    반환: `index.md`(루트) + 도메인별 `<도메인>.md`(MOC). 앱은 이걸 볼트 루트에 그대로 쓴다.
+    """
+    by_domain = _group_by_domain(entries)
+    notes: list[tuple[str, str]] = [("index.md", index_markdown(entries))]
+    for domain, items in by_domain.items():
+        notes.append((vault_filename(domain_moc_stem(domain)), domain_moc_markdown(domain, items)))
+    return notes
