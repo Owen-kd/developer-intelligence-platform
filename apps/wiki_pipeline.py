@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from sqlalchemy import text
@@ -31,6 +31,7 @@ from infrastructure.postgres.event_store import PostgresEventStore
 from modules.jira.application.service import JiraService, SyncResult
 from modules.jira.domain.events import ISSUE_CREATED
 from modules.jira.infrastructure.repository import PostgresIssueRepository
+from modules.knowledge.application.classification import classify_rule
 from modules.knowledge.application.diversify import mmr_select
 from modules.knowledge.application.fusion import hybrid_merge
 from modules.knowledge.application.gap_analysis import GapRecord
@@ -41,6 +42,7 @@ from modules.knowledge.application.wiki_service import (
     wiki_embedding_text,
 )
 from modules.knowledge.domain.entity import Knowledge
+from modules.knowledge.domain.events import ISSUE_CLASSIFIED, IssueClassifiedPayload
 from modules.knowledge.domain.repository import IssueSourceReader
 from modules.knowledge.infrastructure.repository import (
     PostgresIssueSourceReader as _SnapshotReader,
@@ -297,6 +299,56 @@ class _EmbeddingSink(Protocol):
     async def save_embedding(self, knowledge_id: str, embedding: list[float]) -> None: ...
 
 
+class _FacetSink(Protocol):
+    """IssueFacetClassifier 가 필요로 하는 facet 저장·조회 능력(구조적 타이핑)."""
+
+    async def save_facets(
+        self, issue_id: str, facets: dict[str, str], method: str = "rule"
+    ) -> None: ...
+
+    async def facets_exist(self, issue_id: str) -> bool: ...
+
+
+class IssueFacetClassifier:
+    """루프1 자동화: IssueCreated → 규칙 facet 분류 → issue_facets 저장 → IssueClassified 발행.
+
+    규칙만(LLM 0 · 즉시 · 무료). 규칙이 미상인 축은 주기 배치(`classify enrich`)가 보강한다.
+    멱등 — 같은 이슈 재분류는 upsert. 한 건 실패가 다른 건을 막지 않는다.
+    """
+
+    def __init__(self, reader: IssueSourceReader, sink: _FacetSink, bus: EventBus) -> None:
+        self._reader = reader
+        self._sink = sink
+        self._bus = bus
+        self.classified = 0  # 관측용 카운터
+        bus.subscribe(ISSUE_CREATED, self._on_issue_created)
+
+    async def _on_issue_created(self, event: Event) -> None:
+        issue_id = getattr(event.payload, "issue_id", None)
+        if issue_id is None:
+            return
+        # 멱등·비파괴: 이미 분류된 이슈는 스킵한다. IssueCreated 는 신규 이슈에만 발화하지만,
+        # at-least-once 재전송(Redis) 시 규칙 재분류가 기존 LLM 보강(method='llm')을 덮지 않도록.
+        if await self._sink.facets_exist(str(issue_id)):
+            return
+        snapshot = await self._reader.get_snapshot(str(issue_id))
+        if snapshot is None:
+            return
+        facets = classify_rule(
+            snapshot.components, snapshot.labels, snapshot.jira_key, snapshot.summary
+        )
+        await self._sink.save_facets(str(issue_id), asdict(facets), method="rule")
+        self.classified += 1
+        await self._bus.publish(
+            Event(
+                ISSUE_CLASSIFIED,
+                IssueClassifiedPayload(
+                    str(issue_id), snapshot.jira_key, facets.domain, "rule"
+                ),
+            )
+        )
+
+
 class WikiAutoGenerator:
     """루프2 자동화: IssueCreated 이벤트 → (도메인 필터 통과 시) 위키 생성·임베딩.
 
@@ -422,8 +474,9 @@ class CollectGenerateResult:
     jira_mode: str
     issues_synced: int
     issues_created: int
-    wikis_generated: int  # 신규 이슈 중 도메인 필터 통과분만 자동 위키화
-    related_linked: int  # 신규 이슈에 자동 연결된 관련 위키 링크 수(루프3-Push)
+    issues_classified: int = 0  # 신규 이슈 자동 facet 분류 수(ADR-015)
+    wikis_generated: int = 0  # 신규 이슈 중 도메인 필터 통과분만 자동 위키화
+    related_linked: int = 0  # 신규 이슈에 자동 연결된 관련 위키 링크 수(루프3-Push)
 
 
 async def collect_and_generate(
@@ -447,14 +500,16 @@ async def collect_and_generate(
     wiki_llm = llm if llm is not None else _build_llm(settings)[0]
     service = WikiGenerationService(wiki_llm, FilePromptRegistry(), knowledge_repo)
     embedder = embedder or _build_embedder(settings)
+    classifier = IssueFacetClassifier(reader, issue_repo, bus)  # 신규 이슈 자동 facet 분류
     auto = WikiAutoGenerator(service, reader, knowledge_repo, embedder, bus)  # 루프2
     push = RelatedKnowledgePush(reader, knowledge_repo, embedder, bus)  # 루프3-Push
 
-    sync: SyncResult = await jira.sync()  # 신규 이슈 → IssueCreated → auto/push 구독 발화
+    sync: SyncResult = await jira.sync()  # 신규 이슈 → IssueCreated → classify/auto/push 구독 발화
     return CollectGenerateResult(
         jira_mode=jira_mode,
         issues_synced=sync.issues_synced,
         issues_created=sync.issues_created,
+        issues_classified=classifier.classified,
         wikis_generated=auto.generated,
         related_linked=push.linked,
     )

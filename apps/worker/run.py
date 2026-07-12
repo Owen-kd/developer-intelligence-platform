@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 
 from apps.wiki_pipeline import (
+    IssueFacetClassifier,
     RelatedKnowledgePush,
     WikiAutoGenerator,
     _build_embedder,
@@ -23,6 +24,7 @@ from dip_platform.registry import FilePromptRegistry
 from infrastructure.postgres import connection as pg
 from infrastructure.postgres.event_store import PostgresEventStore
 from infrastructure.redis.event_bus import RedisEventBus
+from modules.jira.infrastructure.repository import PostgresIssueRepository
 from modules.knowledge.application.wiki_service import WikiGenerationService
 from modules.knowledge.infrastructure.repository import (
     PostgresIssueSourceReader,
@@ -45,6 +47,7 @@ def build_worker_bus() -> RedisEventBus:
     llm, _mode = _build_llm(settings)
     service = WikiGenerationService(llm, FilePromptRegistry(), repo)
 
+    IssueFacetClassifier(reader, PostgresIssueRepository(), bus)  # 루프1: 신규 이슈 자동 분류
     WikiAutoGenerator(service, reader, repo, embedder, bus)  # 루프2
     RelatedKnowledgePush(reader, repo, embedder, bus)  # 루프3-Push
     return bus

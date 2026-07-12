@@ -221,6 +221,12 @@ class PostgresIssueRepository(IssueRepository):
             for row in rows
         ]
 
+    async def facets_exist(self, issue_id: str) -> bool:
+        """이슈에 이미 facet 분류가 있는지(멱등·비파괴 자동분류용)."""
+        query = text("SELECT 1 FROM issue_facets WHERE issue_id = :iid LIMIT 1")
+        async with pg.get_engine().connect() as conn:
+            return (await conn.execute(query, {"iid": issue_id})).first() is not None
+
     async def save_facets(
         self, issue_id: str, facets: dict[str, str], method: str = "rule"
     ) -> None:
