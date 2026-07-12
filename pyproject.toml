@@ -18,6 +18,7 @@ dependencies = [
     "mcp>=1.2",  # MCP 서버 — Claude Desktop 등에서 도서관 검색 (별도 LLM 불필요)
     "fastembed>=0.3",  # 로컬 임베딩(ONNX, torch 불필요) — infrastructure/embedding, ADR-009
     "redis>=5.0",  # Redis Streams EventBus — 다중 프로세스 상시 구동, ADR-011
+    "neo4j>=5.0",  # 지식 그래프 어댑터(async Bolt) — infrastructure/neo4j, ADR-016
 ]
 
 [project.optional-dependencies]
@@ -58,7 +59,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "fastembed", "fastembed.*", "numpy", "numpy.*", "onnxruntime", "onnxruntime.*",
-    "redis", "redis.*",
+    "redis", "redis.*", "neo4j", "neo4j.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true

@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     # Redis (이벤트 브로커 — infrastructure/redis, ADR-011)
     redis_url: str = "redis://localhost:6379/0"
 
+    # Neo4j 지식 그래프 (파생 그래프, 진실원천은 Postgres — ADR-016)
+    graph_backend: str = "memory"  # 'memory'(기본) | 'neo4j'
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "dip-neo4j"
+
     # Scheduler (주기 수집 — apps/scheduler). 기본 비활성(오발 방지). 실 대량수집은 APR-002 승인 후.
     scheduler_enabled: bool = False
     scheduler_interval_seconds: int = 300
