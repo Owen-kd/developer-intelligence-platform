@@ -42,6 +42,20 @@ def _policies() -> dict[str, tuple[str, ...]]:
 class AskRequest(BaseModel):
     question: str = Field(min_length=1)
     k: int = Field(default=5, ge=1, le=20)
+    # Facet 필터(ADR-015) — 지정 시 그 축의 위키만 검색. 예: domain="product", channel="쿠팡".
+    domain: str | None = None
+    channel: str | None = None
+    issue_type: str | None = None
+    feature_area: str | None = None
+
+    def facet_filters(self) -> dict[str, str]:
+        axes = {
+            "domain": self.domain,
+            "channel": self.channel,
+            "issue_type": self.issue_type,
+            "feature_area": self.feature_area,
+        }
+        return {axis: val for axis, val in axes.items() if val}
 
 
 class WikiHit(BaseModel):
@@ -78,7 +92,11 @@ async def ask_question(
         if not shelf_patterns:
             raise HTTPException(status_code=403, detail="열람 권한이 없습니다(팀 미지정/미허가)")
     result = await run_ask(
-        req.question, k=req.k, embedder=_embedder(), shelf_patterns=shelf_patterns
+        req.question,
+        k=req.k,
+        embedder=_embedder(),
+        shelf_patterns=shelf_patterns,
+        facet_filters=req.facet_filters() or None,
     )
     return AskResponse(
         question=result.question,

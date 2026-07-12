@@ -69,17 +69,30 @@ async def get_expert_knowledge(query: str = "", limit: int = 5) -> str:
 
 
 @mcp.tool()
-async def search_wiki(query: str, limit: int = 5) -> str:
+async def search_wiki(
+    query: str,
+    limit: int = 5,
+    domain: str = "",
+    channel: str = "",
+    issue_type: str = "",
+) -> str:
     """자연어 질문으로 유사 위키를 검색한다 — 하이브리드(의미 + 정확어) RAG + 리랭커.
 
     의미 유사도(벡터)와 정확 식별자(전문검색: option_code/GTIN/쿠팡 등)를 RRF 로 융합하고,
     로컬 cross-encoder 리랭커(ADR-013)로 상위 후보를 재정렬해 정밀도를 높인다.
     예: query="쿠팡에서 옵션이 수정이 안돼요" → 관련 위키를 증상·근본원인·해결과 함께 반환.
+    facet 필터(ADR-015)로 좁힐 수 있다: domain(product/order/stock/pay/...),
+    channel(쿠팡/ESM/스마트스토어/...), issue_type(오류/기능개선/문의/정책). 비우면 전체.
     """
     patterns = _access_shelf_patterns()
     if patterns is not None and not patterns:
         return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가). 관리자에게 서가 권한을 요청하세요."
     settings = get_settings()
+    facet_filters = {
+        axis: val
+        for axis, val in (("domain", domain), ("channel", channel), ("issue_type", issue_type))
+        if val
+    }
     embedding = await get_embedder().embed_query(query)
     return await queries.search_wiki_hybrid(
         embedding,
@@ -90,6 +103,7 @@ async def search_wiki(query: str, limit: int = 5) -> str:
         rerank_pool=settings.rerank_pool,
         diversify=settings.diversify_enabled,
         diversify_lambda=settings.diversify_lambda,
+        facet_filters=facet_filters or None,
     )
 
 

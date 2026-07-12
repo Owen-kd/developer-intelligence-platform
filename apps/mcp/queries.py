@@ -6,6 +6,8 @@ LLM 을 쓰지 않는다 — 검색·조립만 한다(생성은 Claude 몫).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from sqlalchemy import text
 
 from infrastructure.embedding.reranker import Reranker
@@ -157,6 +159,7 @@ async def search_wiki_hybrid(
     rerank_pool: int = 20,
     diversify: bool = False,
     diversify_lambda: float = 0.7,
+    facet_filters: Mapping[str, str] | None = None,
 ) -> str:
     """하이브리드 검색: 벡터(의미) + 전문검색(정확어)을 RRF 융합해 위키 top-k 반환.
 
@@ -164,13 +167,16 @@ async def search_wiki_hybrid(
     `reranker` 가 주어지면 융합 상위 `rerank_pool` 후보를 cross-encoder 로 재정렬한다.
     `diversify` 가 켜지면 같은 주제 중복을 MMR 로 억제해 top-k 를 다양화한다.
     `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 반환한다.
+    `facet_filters`(ADR-015) 가 주어지면 그 축(도메인/채널/유형...)의 위키만 반환한다.
     """
     repo = PostgresKnowledgeRepository()
     vector_hits = await repo.search_semantic(
-        embedding, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+        embedding, limit=30, types=(WIKI_TYPE,),
+        shelf_patterns=shelf_patterns, facet_filters=facet_filters,
     )
     keyword_hits = await repo.search_keyword(
-        query_text, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+        query_text, limit=30, types=(WIKI_TYPE,),
+        shelf_patterns=shelf_patterns, facet_filters=facet_filters,
     )
     pool = rerank_pool if (reranker is not None or diversify) else limit
     hits = hybrid_merge(vector_hits, keyword_hits, pool)

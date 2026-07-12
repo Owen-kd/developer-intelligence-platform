@@ -14,6 +14,7 @@ LLM/임베더는 설정으로 실/Fake 를 고른다:
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -488,11 +489,13 @@ async def hybrid_search(
     shelf_patterns: tuple[str, ...] = (),
     reranker: Reranker | None = None,
     diversify: bool | None = None,
+    facet_filters: Mapping[str, str] | None = None,
 ) -> tuple[list[tuple[Knowledge, float]], list[tuple[Knowledge, float]]]:
     """벡터+전문검색 융합 → (선택)리랭커 재정렬 → (선택)MMR 다양화. (top-k, 벡터히트) 반환.
 
     벡터히트는 gap 판정(커버리지)용 — 리랭커/융합/다양화가 순위를 바꿔도 커버리지 신호는
     의미유사도(코사인) 원본을 쓴다. `diversify` 미지정 시 설정(diversify_enabled)을 따른다.
+    `facet_filters`(ADR-015) 가 주어지면 그 축(도메인/채널/유형...)의 위키만 검색한다.
     """
     settings = get_settings()
     if diversify is None:
@@ -500,10 +503,12 @@ async def hybrid_search(
     knowledge_repo = PostgresKnowledgeRepository()
     query_vec = await embedder.embed_query(question)
     vector_hits = await knowledge_repo.search_semantic(
-        query_vec, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+        query_vec, limit=30, types=(WIKI_TYPE,),
+        shelf_patterns=shelf_patterns, facet_filters=facet_filters,
     )
     keyword_hits = await knowledge_repo.search_keyword(
-        question, limit=30, types=(WIKI_TYPE,), shelf_patterns=shelf_patterns
+        question, limit=30, types=(WIKI_TYPE,),
+        shelf_patterns=shelf_patterns, facet_filters=facet_filters,
     )
     # 리랭커/다양화가 있으면 더 넓은 풀(rerank_pool)을 뽑아 후처리한 뒤 top-k 로 자른다.
     want_pool = reranker is not None or diversify
@@ -526,11 +531,13 @@ async def ask(
     reranker: Reranker | None = None,
     log_gap: bool = True,
     shelf_patterns: tuple[str, ...] = (),
+    facet_filters: Mapping[str, str] | None = None,
 ) -> AskResult:
     """RAG: 질문과 유사한 위키를 찾아 LLM 답변을 조립한다(위키 없으면 검색 결과만).
 
     근거가 없거나 약하면(is_gap) 질문을 query_gaps 에 남긴다(되먹임). gap 실패는 답변을 막지 않는다.
     `shelf_patterns`(접근제어, ADR-010) 가 주어지면 그 서가의 위키만 검색한다.
+    `facet_filters`(ADR-015) 가 주어지면 그 축(도메인/채널/유형...)으로 좁혀 검색한다.
     """
     settings = get_settings()
     embedder = embedder or _build_embedder(settings)
@@ -538,12 +545,13 @@ async def ask(
 
     # 접근제어로 서가 필터된 질의는 gap 신호를 오염시키지 않는다: "다른 팀 서가라 안 보임"과
     # "지식이 없음"을 구분할 수 없고, 제한된 사용자의 질문 원문을 gap 로그에 남기지 않기 위함.
-    if shelf_patterns:
+    if shelf_patterns or facet_filters:
         log_gap = False
 
     # 하이브리드(벡터+전문검색) 융합 → (선택) 리랭커 재정렬. 벡터히트는 gap 판정용으로 함께 받는다.
     hits, vector_hits = await hybrid_search(
-        question, embedder, k, shelf_patterns=shelf_patterns, reranker=reranker
+        question, embedder, k,
+        shelf_patterns=shelf_patterns, reranker=reranker, facet_filters=facet_filters,
     )
 
     # gap 판정은 벡터 커버리지(코사인) 기준 — 정확어 히트가 순위를 바꿔도 커버리지는 의미유사도로.

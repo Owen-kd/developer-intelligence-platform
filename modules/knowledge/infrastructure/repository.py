@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 from sqlalchemy import text
 
@@ -209,12 +210,14 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
         limit: int = 5,
         types: tuple[str, ...] = (),
         shelf_patterns: tuple[str, ...] = (),
+        facet_filters: Mapping[str, str] | None = None,
     ) -> list[tuple[Knowledge, float]]:
         """질의 임베딩과 코사인 유사한 지식을 top-k 로 반환한다(유사도 내림차순).
 
         `types` 가 주어지면 해당 type 만 검색한다(예: ('wiki',)). 미임베딩 행은 제외된다.
         `shelf_patterns` 가 주어지면(접근제어, ADR-010) 지식이 속한 이슈의 서가(components)가
         패턴(ILIKE)에 하나라도 매칭될 때만 반환한다(연결 이슈 없으면 제외 = 기본 deny).
+        `facet_filters`(ADR-015) 가 주어지면 그 축(domain/channel/...)에 맞는 이슈의 위키만.
         """
         type_cond = "AND k.type = ANY(:types)" if types else ""
         shelf_cond = (
@@ -224,17 +227,19 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             if shelf_patterns
             else ""
         )
+        facet_cond, facet_params = _facet_condition(facet_filters)
         query = text(
             f"""
             SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
                    k.created_at, 1 - (k.embedding <=> CAST(:q AS vector)) AS score
             FROM knowledge k
-            WHERE k.embedding IS NOT NULL {type_cond} {shelf_cond}
+            WHERE k.embedding IS NOT NULL {type_cond} {shelf_cond} {facet_cond}
             ORDER BY k.embedding <=> CAST(:q AS vector)
             LIMIT :lim
             """
         )
         params: dict[str, object] = {"q": _vector_literal(embedding), "lim": limit}
+        params.update(facet_params)
         if types:
             params["types"] = list(types)
         if shelf_patterns:
@@ -249,10 +254,11 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
         limit: int = 20,
         types: tuple[str, ...] = (),
         shelf_patterns: tuple[str, ...] = (),
+        facet_filters: Mapping[str, str] | None = None,
     ) -> list[tuple[Knowledge, float]]:
         """전문검색(FTS) — 정확 토큰(식별자/키워드) 매칭. ts_rank 내림차순 (하이브리드 BM25 arm).
 
-        `types`/`shelf_patterns` 는 search_semantic 과 동일 의미. 빈 질의면 빈 결과.
+        `types`/`shelf_patterns`/`facet_filters` 는 search_semantic 과 동일 의미. 빈 질의면 빈 결과.
         """
         if not query_text.strip():
             return []
@@ -264,16 +270,18 @@ class PostgresKnowledgeRepository(KnowledgeRepository):
             if shelf_patterns
             else ""
         )
+        facet_cond, facet_params = _facet_condition(facet_filters)
         query = text(
             f"""
             SELECT k.id, k.type, k.issue_id, k.summary, k.body, k.sources, k.source,
                    k.created_at, ts_rank(k.tsv, q) AS score
             FROM knowledge k, websearch_to_tsquery('simple', :q) AS q
-            WHERE k.tsv @@ q {type_cond} {shelf_cond}
+            WHERE k.tsv @@ q {type_cond} {shelf_cond} {facet_cond}
             ORDER BY score DESC LIMIT :lim
             """
         )
         params: dict[str, object] = {"q": query_text, "lim": limit}
+        params.update(facet_params)
         if types:
             params["types"] = list(types)
         if shelf_patterns:
@@ -344,6 +352,27 @@ class PostgresIssueSourceReader(IssueSourceReader):
             labels=tuple(issue.labels or ()),
             components=tuple(issue.components or ()),
         )
+
+
+# 검색 facet 필터(ADR-015)로 걸 수 있는 축 화이트리스트 — 컬럼명 직접 삽입이라 주입 방지 필수.
+_FACET_COLUMNS: frozenset[str] = frozenset(
+    {"domain", "feature_area", "action", "channel", "issue_type", "team"}
+)
+
+
+def _facet_condition(facet_filters: Mapping[str, str] | None) -> tuple[str, dict[str, str]]:
+    """issue_facets 조인 필터 SQL + 바인드 파라미터. 축은 화이트리스트, 값은 파라미터화."""
+    if not facet_filters:
+        return "", {}
+    items = [(axis, val) for axis, val in facet_filters.items() if axis in _FACET_COLUMNS and val]
+    if not items:
+        return "", {}
+    conds = " AND ".join(f"f.{axis} = :fct_{axis}" for axis, _ in items)
+    cond = (
+        "AND EXISTS (SELECT 1 FROM issue_facets f "
+        f"WHERE f.issue_id = k.issue_id AND {conds})"
+    )
+    return cond, {f"fct_{axis}": val for axis, val in items}
 
 
 def _vector_literal(embedding: list[float]) -> str:
