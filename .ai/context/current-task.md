@@ -51,7 +51,8 @@
 - [x] **정제 계층**(LLM 0, 비파괴) — `modules/knowledge/application/refinement.py`(노이즈 필터 `filter_comments` + 가치 게이트 `is_wiki_worthy`/`assess`), 노이즈목록 `config/refinement/noise_phrases.txt`(운영 조정). 위키 프롬프트는 clean 코멘트만, 신호 빈약 이슈는 인덱스만(LLM 스킵). 실측(상품 60건): 인덱스만 4 · 코멘트 드롭 7%. 원본 보존(헌법). 유닛 8건. 큰 이득은 ENG 지원도메인.
 - [x] **이슈 Facet 택소노미**([ADR-015](../decisions/ADR-015-issue-faceted-taxonomy.md), 오너 승인 2026-07-10) — "이슈 저장만 말고 분류 우선". 단일 트리 대신 직교 6축(도메인·기능영역·액션·채널·유형·팀/영역). 통제 어휘는 **백엔드 실 도메인 문서**(`gmp.openapi.2023/.ai`: domain-map·glossary·domains/product)에 정렬(지어내지 않음). [taxonomy.md](../knowledge/taxonomy.md).
   - **1단계 완료(규칙 분류, LLM 0)**: `modules/knowledge/application/classification.py::classify_rule`(순수) + `013_issue_facets.sql`(issue_facets, 둘러보기 인덱스) + `jira/repository.iter_for_classification`/`save_facets` + `apps/classify_bootstrap.py` + CLI `classify bootstrap`. **라이브: 5000건 전량 분류·적재**. 규칙 커버리지: team 100%·도메인 81%·유형 78%·액션 69%·기능영역 61%(채널·영역 낮음=대부분 진짜 공통). 검증: 둘러보기 도메인>기능영역>액션 DB 작동, PA20-19864=product·option·수정·쿠팡·오류·툴·엔진. 유닛 6건.
-  - 다음(2단계): `미상`분 LLM 보강(기능영역·액션·문의성 도메인, 고정어휘 제한) · 수집 배선(신규 이슈 자동분류 IssueClassified) · 검색 facet 필터.
+  - **2단계 완료(LLM 보강)**: `modules/knowledge/application/classification.py`(통제어휘 `*_VOCAB` + 순수 `validate_llm_facets`, 어휘밖 무시·규칙우선) + `prompts/knowledge/classify.md`(고정어휘 JSON) + `apps/classify_enrich.py` + CLI `classify enrich`. 저가 **Haiku**(claude-haiku-4-5). 트리거는 도메인/기능영역/액션 미상만(channel=공통 제외=비용). **라이브 전량 2745건 보강(실패 0)**. 커버리지 도메인 **81→99.6%**·액션 **69→92.4%**·기능영역 63%(product 전용이라 비product는 정상적으로 미상). 미상 도메인 945→20. 유닛 2건.
+  - 다음(3단계): 검색 facet 필터(/ask·MCP 도메인/채널/유형) · 수집 배선(신규 이슈 자동분류 IssueClassified).
 - [ ] 나머지 375건(상품 도메인 총 405건) + 타 도메인 생성 대기. `ANTHROPIC_MODEL=claude-sonnet-5 python -m apps.cli.wiki build`.
 - [ ] 후속: 백엔드 도메인 지식(`gmp.openapi.2023/.ai/domains/product/`) → DIP `knowledge/` 흡수로 근본원인 grounding 강화 · 전문가 검증 루프(verified 승격) · 전량 자동수집(스케줄러, APR-002) · 접근제어([ADR-010]/[APR-010]).
 
