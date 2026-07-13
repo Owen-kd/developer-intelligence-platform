@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     def wiki_domain_set(self) -> frozenset[str]:
         return frozenset(d.strip() for d in self.wiki_domains.split(",") if d.strip())
 
+    # Obsidian 자동 export — 위키 생성 후 볼트를 자동 갱신(비파괴 파생 뷰). 기본 OFF.
+    obsidian_auto_export: bool = False
+    obsidian_vault_path: str = "vault"
+
     # Embedding (로컬, infrastructure/embedding 에서만 사용 — ADR-009)
     # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.
     embedding_model: str = "intfloat/multilingual-e5-large"
