@@ -15,7 +15,13 @@ from sqlalchemy import text
 
 from infrastructure.neo4j.graph_repository import Neo4jGraphRepository
 from infrastructure.postgres import connection as pg
-from modules.graph.domain.model import Edge, Node
+from modules.graph.domain.model import (
+    Edge,
+    Node,
+    channel_node_id,
+    component_node_id,
+    domain_node_id,
+)
 from shared.config.settings import get_settings
 from shared.logger import get_logger
 
@@ -28,18 +34,6 @@ _UNKNOWN, _COMMON = "미상", "공통"
 class BackfillResult:
     nodes: int
     edges: int
-
-
-def _domain_id(name: str) -> str:
-    return f"domain:{name}"
-
-
-def _channel_id(name: str) -> str:
-    return f"channel:{name}"
-
-
-def _component_id(name: str) -> str:
-    return f"component:{name}"
 
 
 async def backfill_graph() -> BackfillResult:
@@ -92,10 +86,10 @@ async def backfill_graph() -> BackfillResult:
         for row in facets:
             if row.domain and row.domain != _UNKNOWN:
                 domains.add(row.domain)
-                edges.append(Edge(src=row.iid, dst=_domain_id(row.domain), rel="IN_DOMAIN"))
+                edges.append(Edge(src=row.iid, dst=domain_node_id(row.domain), rel="IN_DOMAIN"))
             if row.channel and row.channel != _COMMON:
                 channels.add(row.channel)
-                edges.append(Edge(src=row.iid, dst=_channel_id(row.channel), rel="ON_CHANNEL"))
+                edges.append(Edge(src=row.iid, dst=channel_node_id(row.channel), rel="ON_CHANNEL"))
 
         # 컴포넌트 노드 + IN_COMPONENT
         comps = (
@@ -108,7 +102,7 @@ async def backfill_graph() -> BackfillResult:
         ).all()
         for row in comps:
             components.add(row.comp)
-            edges.append(Edge(src=row.iid, dst=_component_id(row.comp), rel="IN_COMPONENT"))
+            edges.append(Edge(src=row.iid, dst=component_node_id(row.comp), rel="IN_COMPONENT"))
 
         # RELATED_TO (issue_related_wiki)
         related = (
@@ -120,11 +114,11 @@ async def backfill_graph() -> BackfillResult:
             edges.append(Edge(src=row.iid, dst=row.wid, rel="RELATED_TO"))
 
     for name in sorted(domains):
-        nodes.append(Node(id=_domain_id(name), kind="Domain", label=name))
+        nodes.append(Node(id=domain_node_id(name), kind="Domain", label=name))
     for name in sorted(channels):
-        nodes.append(Node(id=_channel_id(name), kind="Channel", label=name))
+        nodes.append(Node(id=channel_node_id(name), kind="Channel", label=name))
     for name in sorted(components):
-        nodes.append(Node(id=_component_id(name), kind="Component", label=name))
+        nodes.append(Node(id=component_node_id(name), kind="Component", label=name))
 
     repo = Neo4jGraphRepository(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     try:

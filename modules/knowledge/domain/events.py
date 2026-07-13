@@ -26,4 +26,5 @@ class IssueClassifiedPayload(EventPayload):
     issue_id: str
     jira_key: str
     domain: str
+    channel: str
     method: str  # 'rule' | 'llm'

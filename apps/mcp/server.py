@@ -12,12 +12,15 @@ Claude Desktop 연결: README/응답의 설정 JSON 참고.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from mcp.server.fastmcp import FastMCP
 
 from apps.mcp import queries
 from dip_platform.access import allowed_patterns, load_policies
 from infrastructure.embedding.client import get_embedder  # 프로세스 단일 캐시 임베더
 from infrastructure.embedding.reranker import Reranker, get_reranker
+from infrastructure.neo4j.graph_repository import Neo4jGraphRepository
 from shared.config.settings import get_settings
 
 mcp = FastMCP("dip-knowledge-library")
@@ -39,6 +42,15 @@ def _reranker() -> Reranker | None:
     if not get_settings().rerank_enabled:
         return None
     return get_reranker()
+
+
+@lru_cache(maxsize=1)
+def _graph_repo() -> Neo4jGraphRepository | None:
+    """graph_backend=neo4j 면 프로세스 단일 그래프 저장소, 아니면 None."""
+    settings = get_settings()
+    if settings.graph_backend != "neo4j":
+        return None
+    return Neo4jGraphRepository(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
 
 
 @mcp.tool()
@@ -123,6 +135,31 @@ async def list_shelves(limit: int = 25) -> str:
     if patterns is not None and not patterns:
         return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
     return await queries.list_shelves(limit, patterns or ())
+
+
+@mcp.tool()
+async def graph_neighbors(jira_key: str) -> str:
+    """이슈의 지식 그래프 이웃 — 도메인/채널 + 관련 위키 + 같은 도메인·채널의 관련 사안(2홉).
+
+    Neo4j 지식 그래프(ADR-016)를 순회해 '연결된 지식'을 보여준다. 벡터/전문검색과 달리
+    facet 관계로 이웃을 찾는다. 예: jira_key="PA20-19864".
+    """
+    patterns = _access_shelf_patterns()
+    if patterns is not None and not patterns:
+        return "열람 권한이 없습니다(DIP_TEAM 미지정/미허가)."
+    repo = _graph_repo()
+    if repo is None:
+        return "그래프 백엔드 꺼짐(GRAPH_BACKEND=neo4j + `python -m apps.cli.graph backfill`)."
+    ctx = await repo.issue_context(jira_key)
+    if ctx is None:
+        return f"그래프에 {jira_key} 가 없습니다."
+    lines = [
+        f"# {ctx.jira_key} 그래프 이웃",
+        f"- 도메인: {ctx.domain} · 채널: {ctx.channel}",
+        f"- 관련 위키(RELATED_TO): {', '.join(ctx.related_wikis) or '-'}",
+        f"- 같은 도메인·채널 관련 사안(2홉): {', '.join(ctx.related_issues) or '-'}",
+    ]
+    return "\n".join(lines)
 
 
 def main() -> None:

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 from neo4j import AsyncGraphDatabase
 
@@ -18,6 +19,17 @@ from modules.graph.domain.model import Edge, Node
 from modules.graph.domain.repository import GraphRepository
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class GraphContext:
+    """이슈의 그래프 컨텍스트(GraphRAG) — 이웃과 2홉 관련 사안."""
+
+    jira_key: str
+    domain: str
+    channel: str
+    related_wikis: list[str] = field(default_factory=list)  # RELATED_TO 위키 키
+    related_issues: list[str] = field(default_factory=list)  # 같은 도메인+채널 위키보유 이슈(2홉)
 
 
 def _safe_ident(name: str) -> str:
@@ -94,6 +106,37 @@ class Neo4jGraphRepository(GraphRepository):
             result = await session.run(query, **params)
             rows = [record.data() async for record in result]
         return [Node(id=r["id"], kind=r["kind"], label=r["label"]) for r in rows]
+
+    async def issue_context(self, jira_key: str, limit: int = 8) -> GraphContext | None:
+        """이슈의 그래프 컨텍스트(GraphRAG): 도메인/채널 + 관련 위키 + 2홉 관련 사안.
+
+        관련 사안 = 같은 도메인·채널을 공유하며 위키가 있는 다른 이슈(그래프 순회로 발견).
+        이슈가 그래프에 없으면 None.
+        """
+        query = """
+        MATCH (i:Issue {label: $key})
+        OPTIONAL MATCH (i)-[:IN_DOMAIN]->(d:Domain)
+        OPTIONAL MATCH (i)-[:ON_CHANNEL]->(c:Channel)
+        OPTIONAL MATCH (i)-[:RELATED_TO]->(rw:Wiki)
+        WITH i, d, c, collect(DISTINCT rw.label) AS related_wikis
+        OPTIONAL MATCH (i)-[:IN_DOMAIN]->(d)<-[:IN_DOMAIN]-(o:Issue)-[:ON_CHANNEL]->(c),
+                       (:Wiki)-[:DESCRIBES]->(o)
+        WHERE o <> i
+        WITH d, c, related_wikis, collect(DISTINCT o.label)[..$limit] AS related_issues
+        RETURN d.label AS domain, c.label AS channel, related_wikis, related_issues
+        """
+        async with self._driver.session() as session:
+            result = await session.run(query, key=jira_key, limit=limit)
+            record = await result.single()
+        if record is None:
+            return None
+        return GraphContext(
+            jira_key=jira_key,
+            domain=record["domain"] or "미상",
+            channel=record["channel"] or "공통",
+            related_wikis=[w for w in record["related_wikis"] if w],
+            related_issues=[o for o in record["related_issues"] if o],
+        )
 
     async def aclose(self) -> None:
         await self._driver.close()

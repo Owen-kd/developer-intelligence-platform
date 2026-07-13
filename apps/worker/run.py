@@ -21,9 +21,11 @@ from apps.wiki_pipeline import (
     _build_llm,
 )
 from dip_platform.registry import FilePromptRegistry
+from infrastructure.neo4j.graph_repository import Neo4jGraphRepository
 from infrastructure.postgres import connection as pg
 from infrastructure.postgres.event_store import PostgresEventStore
 from infrastructure.redis.event_bus import RedisEventBus
+from modules.graph.application.service import GraphService
 from modules.jira.infrastructure.repository import PostgresIssueRepository
 from modules.knowledge.application.wiki_service import WikiGenerationService
 from modules.knowledge.infrastructure.repository import (
@@ -50,6 +52,11 @@ def build_worker_bus() -> RedisEventBus:
     IssueFacetClassifier(reader, PostgresIssueRepository(), bus)  # 루프1: 신규 이슈 자동 분류
     WikiAutoGenerator(service, reader, repo, embedder, bus)  # 루프2
     RelatedKnowledgePush(reader, repo, embedder, bus)  # 루프3-Push
+    if settings.graph_backend == "neo4j":  # IssueClassified/CommitsLinked → Neo4j 그래프 증분
+        graph = Neo4jGraphRepository(
+            settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password
+        )
+        GraphService(graph, bus)
     return bus
 
 

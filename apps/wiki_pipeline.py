@@ -343,7 +343,7 @@ class IssueFacetClassifier:
             Event(
                 ISSUE_CLASSIFIED,
                 IssueClassifiedPayload(
-                    str(issue_id), snapshot.jira_key, facets.domain, "rule"
+                    str(issue_id), snapshot.jira_key, facets.domain, facets.channel, "rule"
                 ),
             )
         )

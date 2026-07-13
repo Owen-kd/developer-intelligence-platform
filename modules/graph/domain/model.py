@@ -24,3 +24,16 @@ class Edge:
     src: str
     dst: str
     rel: str
+
+
+# facet 노드 id 규약 — 백필과 증분 동기화가 같은 노드를 가리키도록 한 곳에서 정의(ADR-016).
+def domain_node_id(name: str) -> str:
+    return f"domain:{name}"
+
+
+def channel_node_id(name: str) -> str:
+    return f"channel:{name}"
+
+
+def component_node_id(name: str) -> str:
+    return f"component:{name}"
