@@ -81,7 +81,8 @@ def _wiki_json(_s: str, _u: str) -> str:
 def _make(reader: _Reader, repo: _Repo, bus: InMemoryEventBus) -> WikiAutoGenerator:
     service = WikiGenerationService(FakeLLMClient(responder=_wiki_json), FilePromptRegistry(), repo)
     return WikiAutoGenerator(
-        service, reader, repo, FakeEmbedder(dim=8), bus, keywords=("상품", "쿠팡")
+        service, reader, repo, FakeEmbedder(dim=8), bus,
+        wiki_domains=frozenset({"product"}), wiki_types=frozenset({"오류", "기능개선"}),
     )
 
 
@@ -101,12 +102,12 @@ async def test_auto_generates_wiki_on_issue_created_in_domain() -> None:
 
 
 async def test_auto_skips_low_value_issue() -> None:
-    # 도메인은 맞지만 본문·코멘트·커밋 없음 → 가치 게이트 탈락(제목+상태만) → 생성 안 함
+    # 도메인·유형은 맞지만 본문·코멘트·커밋 없음 → 가치 게이트 탈락(제목+상태만) → 생성 안 함
     repo = _Repo()
     empty = IssueSnapshot(
         issue_id="i-3", jira_key="PA20-3", summary="쿠팡", status="열림", priority="Low",
         comments=("넵", "처리 완료되었습니다"), commit_shas=(), source_event_ids=(),
-        description="", components=("쿠팡",),
+        description="", components=("상품-오류-툴",),
     )
     reader = _Reader({"i-3": empty})
     bus = InMemoryEventBus()

@@ -32,10 +32,16 @@ class Settings(BaseSettings):
     wiki_model: str = "claude-haiku-4-5"
     # 이 유형(facet issue_type)만 자동 위키화 — '문의' 등은 스킵(비용↓·품질↑). 콤마 구분.
     wiki_types: str = "오류,기능개선"
+    # 이 도메인(facet domain)만 위키화 — 지식화 범위. 확장하려면 도메인 추가(예: stock). 콤마.
+    wiki_domains: str = "product,order"
 
     @property
     def wiki_type_set(self) -> frozenset[str]:
         return frozenset(t.strip() for t in self.wiki_types.split(",") if t.strip())
+
+    @property
+    def wiki_domain_set(self) -> frozenset[str]:
+        return frozenset(d.strip() for d in self.wiki_domains.split(",") if d.strip())
 
     # Embedding (로컬, infrastructure/embedding 에서만 사용 — ADR-009)
     # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.

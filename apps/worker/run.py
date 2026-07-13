@@ -50,8 +50,9 @@ def build_worker_bus() -> RedisEventBus:
     service = WikiGenerationService(llm, FilePromptRegistry(), repo)
 
     IssueFacetClassifier(reader, PostgresIssueRepository(), bus)  # 루프1: 신규 이슈 자동 분류
-    WikiAutoGenerator(  # 루프2: 유형 게이트(문의 스킵)
-        service, reader, repo, embedder, bus, wiki_types=settings.wiki_type_set
+    WikiAutoGenerator(  # 루프2: 도메인+유형 게이트(문의 스킵)
+        service, reader, repo, embedder, bus,
+        wiki_domains=settings.wiki_domain_set, wiki_types=settings.wiki_type_set,
     )
     RelatedKnowledgePush(reader, repo, embedder, bus)  # 루프3-Push
     if settings.graph_backend == "neo4j":  # IssueClassified/CommitsLinked → Neo4j 그래프 증분

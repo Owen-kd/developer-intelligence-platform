@@ -190,14 +190,16 @@ class AskResult:
     hits: list[tuple[Knowledge, float]]  # (위키, 유사도) 내림차순
 
 
-async def _product_issue_ids(
-    keywords: tuple[str, ...], only_missing: bool = False
+async def _domain_issue_ids(
+    domains: frozenset[str], only_missing: bool = False
 ) -> list[str]:
-    """components(서가)에 키워드가 포함된 이슈 id 를 반환한다(상품 도메인 필터).
+    """facet 도메인(issue_facets.domain)이 대상 도메인인 이슈 id 를 반환한다(위키화 후보).
 
+    컴포넌트 키워드가 아니라 **분류된 도메인**으로 거른다(ADR-015) — 정확·설정으로 도메인 확장.
     `only_missing` 이면 아직 위키가 없는 이슈만(백필 대상).
     """
-    patterns = [f"%{keyword}%" for keyword in keywords]
+    if not domains:
+        return []
     missing_cond = (
         "AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE k.type='wiki' AND k.issue_id = i.id)"
         if only_missing
@@ -206,15 +208,13 @@ async def _product_issue_ids(
     query = text(
         f"""
         SELECT i.id::text AS id FROM issues i
-        WHERE EXISTS (
-            SELECT 1 FROM jsonb_array_elements_text(i.components) c
-            WHERE c ILIKE ANY(:pats)
-        ) {missing_cond}
+        JOIN issue_facets f ON f.issue_id = i.id
+        WHERE f.domain = ANY(:domains) {missing_cond}
         ORDER BY i.updated_at DESC
         """
     )
     async with pg.get_engine().connect() as conn:
-        rows = (await conn.execute(query, {"pats": patterns})).all()
+        rows = (await conn.execute(query, {"domains": list(domains)})).all()
     return [row.id for row in rows]
 
 
@@ -251,17 +251,19 @@ async def _grounding_for(keywords: tuple[str, ...], limit: int = 3) -> tuple[Kno
 
 async def build_wikis(
     *,
-    keywords: tuple[str, ...] = PRODUCT_KEYWORDS,
+    domains: frozenset[str] | None = None,
     limit: int | None = None,
     only_missing: bool = False,
     embedder: Embedder | None = None,
     llm: LLMClient | None = None,
 ) -> BuildResult:
-    """도메인 이슈들을 위키로 생성·임베딩·적재한다(멱등).
+    """대상 도메인 이슈들을 위키로 생성·임베딩·적재한다(멱등).
 
-    `only_missing` 이면 아직 위키가 없는 이슈만 대상(backlog 백필). `limit` 로 배치 크기 제한.
+    `domains` 미지정 시 설정(wiki_domains, 기본 product+order). 유형 게이트(오류/기능개선) +
+    가치 게이트로 비용 절감. `only_missing` 이면 아직 위키 없는 이슈만(백필). `limit` 로 배치 제한.
     """
     settings = get_settings()
+    domains = domains if domains is not None else settings.wiki_domain_set
     if llm is not None:
         llm_mode = "injected"
     else:
@@ -272,7 +274,7 @@ async def build_wikis(
     service = WikiGenerationService(llm, FilePromptRegistry(), knowledge_repo)
     wiki_types = settings.wiki_type_set
 
-    issue_ids = await _product_issue_ids(keywords, only_missing=only_missing)
+    issue_ids = await _domain_issue_ids(domains, only_missing=only_missing)
     if limit is not None:
         issue_ids = issue_ids[:limit]
 
@@ -299,7 +301,7 @@ async def build_wikis(
             _logger.info("wiki.index_only", jira_key=snapshot.jira_key)
             continue
         try:
-            grounding = await _grounding_for(snapshot.components or keywords)
+            grounding = await _grounding_for(snapshot.components or ())
             wiki = await service.generate(snapshot, grounding)
             vectors = await embedder.embed_documents([wiki_embedding_text(wiki)])
             await knowledge_repo.save_embedding(wiki.id, vectors[0])
@@ -394,17 +396,17 @@ class WikiAutoGenerator:
         repo: _EmbeddingSink,
         embedder: Embedder,
         bus: EventBus,
-        keywords: tuple[str, ...] = PRODUCT_KEYWORDS,
+        wiki_domains: frozenset[str] = frozenset(),
         wiki_types: frozenset[str] = frozenset(),
     ) -> None:
         self._service = service
         self._reader = reader
         self._repo = repo
         self._embedder = embedder
-        self._keywords = keywords
+        self._wiki_domains = wiki_domains  # 이 도메인만 위키화(빈 set=제한 없음)
         self._wiki_types = wiki_types  # 이 유형만 위키화(빈 set=제한 없음). '문의' 등 비용 절감.
         self.generated = 0  # 관측용 카운터
-        self.skipped_type = 0  # 유형 게이트로 스킵된 수(관측)
+        self.skipped_gate = 0  # 도메인/유형 게이트로 스킵된 수(관측)
         bus.subscribe(ISSUE_CREATED, self._on_issue_created)
 
     async def _on_issue_created(self, event: Event) -> None:
@@ -412,12 +414,17 @@ class WikiAutoGenerator:
         if issue_id is None:
             return
         snapshot = await self._reader.get_snapshot(str(issue_id))
-        if snapshot is None or not _in_domain(snapshot.components, self._keywords):
+        if snapshot is None:
             return
-        # 유형 게이트: 오류/기능개선만 위키화, 문의 등은 스킵(비용↓·품질↑) — LLM 0
-        if not _wiki_type_allowed(snapshot, self._wiki_types):
-            self.skipped_type += 1
-            _logger.info("wiki.auto_skip_type", jira_key=snapshot.jira_key)
+        # 도메인/유형 게이트(facet, LLM 0): 대상 도메인 + 오류/기능개선만. 문의 등 스킵(비용↓).
+        facets = classify_rule(
+            snapshot.components, snapshot.labels, snapshot.jira_key, snapshot.summary
+        )
+        if self._wiki_domains and facets.domain not in self._wiki_domains:
+            return
+        if self._wiki_types and facets.issue_type not in self._wiki_types:
+            self.skipped_gate += 1
+            _logger.info("wiki.auto_skip_gate", jira_key=snapshot.jira_key)
             return
         # 가치 게이트: 신호 빈약한 이슈는 자동 위키 생성 스킵(제목+상태만 인덱싱)
         if not assess(
@@ -540,8 +547,9 @@ async def collect_and_generate(
     service = WikiGenerationService(wiki_llm, FilePromptRegistry(), knowledge_repo)
     embedder = embedder or _build_embedder(settings)
     classifier = IssueFacetClassifier(reader, issue_repo, bus)  # 신규 이슈 자동 facet 분류
-    auto = WikiAutoGenerator(  # 루프2: 유형 게이트(문의 스킵)로 비용↓
-        service, reader, knowledge_repo, embedder, bus, wiki_types=settings.wiki_type_set
+    auto = WikiAutoGenerator(  # 루프2: 도메인+유형 게이트(문의 스킵)로 비용↓
+        service, reader, knowledge_repo, embedder, bus,
+        wiki_domains=settings.wiki_domain_set, wiki_types=settings.wiki_type_set,
     )
     push = RelatedKnowledgePush(reader, knowledge_repo, embedder, bus)  # 루프3-Push
 
