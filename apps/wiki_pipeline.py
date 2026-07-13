@@ -41,7 +41,7 @@ from modules.knowledge.application.wiki_service import (
     WikiGenerationService,
     wiki_embedding_text,
 )
-from modules.knowledge.domain.entity import Knowledge
+from modules.knowledge.domain.entity import IssueSnapshot, Knowledge
 from modules.knowledge.domain.events import ISSUE_CLASSIFIED, IssueClassifiedPayload
 from modules.knowledge.domain.repository import IssueSourceReader
 from modules.knowledge.infrastructure.repository import (
@@ -145,6 +145,31 @@ def _build_llm(settings: Settings) -> tuple[LLMClient, str]:
     return FakeLLMClient(responder=_fake_wiki_response), "fake"
 
 
+def _build_wiki_llm(settings: Settings) -> tuple[LLMClient, str]:
+    """위키 생성용 LLM — `wiki_model`(기본 Haiku, 저가). 비어있으면 anthropic_model 로 폴백."""
+    if settings.anthropic_api_key:
+        from infrastructure.anthropic.client import AnthropicClient
+
+        model = settings.wiki_model or settings.anthropic_model
+        client = AnthropicClient(
+            api_key=settings.anthropic_api_key,
+            model=model,
+            max_tokens=max(settings.llm_max_tokens, 4096),
+        )
+        return client, model
+    return FakeLLMClient(responder=_fake_wiki_response), "fake"
+
+
+def _wiki_type_allowed(snapshot: IssueSnapshot, allowed: frozenset[str]) -> bool:
+    """이슈 유형(facet)이 위키화 대상인지 — '문의' 등은 제외해 비용↓·지식품질↑ (규칙, 무료)."""
+    if not allowed:
+        return True
+    facets = classify_rule(
+        snapshot.components, snapshot.labels, snapshot.jira_key, snapshot.summary
+    )
+    return facets.issue_type in allowed
+
+
 def _build_embedder(settings: Settings) -> Embedder:
     return get_embedder()  # 프로세스 단일 캐시 인스턴스(재생성 방지)
 
@@ -240,11 +265,12 @@ async def build_wikis(
     if llm is not None:
         llm_mode = "injected"
     else:
-        llm, llm_mode = _build_llm(settings)
+        llm, llm_mode = _build_wiki_llm(settings)  # 기본 Haiku(저가)
     embedder = embedder or _build_embedder(settings)
     reader = _SnapshotReader()
     knowledge_repo = PostgresKnowledgeRepository()
     service = WikiGenerationService(llm, FilePromptRegistry(), knowledge_repo)
+    wiki_types = settings.wiki_type_set
 
     issue_ids = await _product_issue_ids(keywords, only_missing=only_missing)
     if limit is not None:
@@ -256,6 +282,11 @@ async def build_wikis(
     for issue_id in issue_ids:
         snapshot = await reader.get_snapshot(issue_id)
         if snapshot is None:
+            continue
+        # 유형 게이트: 오류/기능개선만 위키화, 문의 등 스킵(비용↓·품질↑) — LLM 0
+        if not _wiki_type_allowed(snapshot, wiki_types):
+            index_only += 1
+            _logger.info("wiki.skip_type", jira_key=snapshot.jira_key)
             continue
         # 가치 게이트: 신호 빈약한 이슈는 LLM 생성 스킵(제목+상태만 인덱싱) — 비용 절약
         refinement = assess(
@@ -364,13 +395,16 @@ class WikiAutoGenerator:
         embedder: Embedder,
         bus: EventBus,
         keywords: tuple[str, ...] = PRODUCT_KEYWORDS,
+        wiki_types: frozenset[str] = frozenset(),
     ) -> None:
         self._service = service
         self._reader = reader
         self._repo = repo
         self._embedder = embedder
         self._keywords = keywords
+        self._wiki_types = wiki_types  # 이 유형만 위키화(빈 set=제한 없음). '문의' 등 비용 절감.
         self.generated = 0  # 관측용 카운터
+        self.skipped_type = 0  # 유형 게이트로 스킵된 수(관측)
         bus.subscribe(ISSUE_CREATED, self._on_issue_created)
 
     async def _on_issue_created(self, event: Event) -> None:
@@ -379,6 +413,11 @@ class WikiAutoGenerator:
             return
         snapshot = await self._reader.get_snapshot(str(issue_id))
         if snapshot is None or not _in_domain(snapshot.components, self._keywords):
+            return
+        # 유형 게이트: 오류/기능개선만 위키화, 문의 등은 스킵(비용↓·품질↑) — LLM 0
+        if not _wiki_type_allowed(snapshot, self._wiki_types):
+            self.skipped_type += 1
+            _logger.info("wiki.auto_skip_type", jira_key=snapshot.jira_key)
             return
         # 가치 게이트: 신호 빈약한 이슈는 자동 위키 생성 스킵(제목+상태만 인덱싱)
         if not assess(
@@ -497,11 +536,13 @@ async def collect_and_generate(
 
     reader = _SnapshotReader()
     knowledge_repo = PostgresKnowledgeRepository()
-    wiki_llm = llm if llm is not None else _build_llm(settings)[0]
+    wiki_llm = llm if llm is not None else _build_wiki_llm(settings)[0]  # 기본 Haiku(저가)
     service = WikiGenerationService(wiki_llm, FilePromptRegistry(), knowledge_repo)
     embedder = embedder or _build_embedder(settings)
     classifier = IssueFacetClassifier(reader, issue_repo, bus)  # 신규 이슈 자동 facet 분류
-    auto = WikiAutoGenerator(service, reader, knowledge_repo, embedder, bus)  # 루프2
+    auto = WikiAutoGenerator(  # 루프2: 유형 게이트(문의 스킵)로 비용↓
+        service, reader, knowledge_repo, embedder, bus, wiki_types=settings.wiki_type_set
+    )
     push = RelatedKnowledgePush(reader, knowledge_repo, embedder, bus)  # 루프3-Push
 
     sync: SyncResult = await jira.sync()  # 신규 이슈 → IssueCreated → classify/auto/push 구독 발화

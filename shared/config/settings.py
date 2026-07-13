@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 1024
     # Facet LLM 보강(ADR-015 2단계)은 단순 분류라 저가 모델로 충분 — 비용 최소화.
     classify_model: str = "claude-haiku-4-5"
+    # 위키 생성 모델·대상(비용 제어, 오너 결정). 기본 Haiku(저가). 빈값이면 anthropic_model 사용.
+    wiki_model: str = "claude-haiku-4-5"
+    # 이 유형(facet issue_type)만 자동 위키화 — '문의' 등은 스킵(비용↓·품질↑). 콤마 구분.
+    wiki_types: str = "오류,기능개선"
+
+    @property
+    def wiki_type_set(self) -> frozenset[str]:
+        return frozenset(t.strip() for t in self.wiki_types.split(",") if t.strip())
 
     # Embedding (로컬, infrastructure/embedding 에서만 사용 — ADR-009)
     # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.

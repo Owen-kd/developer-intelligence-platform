@@ -18,7 +18,7 @@ from apps.wiki_pipeline import (
     RelatedKnowledgePush,
     WikiAutoGenerator,
     _build_embedder,
-    _build_llm,
+    _build_wiki_llm,
 )
 from dip_platform.registry import FilePromptRegistry
 from infrastructure.neo4j.graph_repository import Neo4jGraphRepository
@@ -46,11 +46,13 @@ def build_worker_bus() -> RedisEventBus:
     reader = PostgresIssueSourceReader()
     repo = PostgresKnowledgeRepository()
     embedder = _build_embedder(settings)
-    llm, _mode = _build_llm(settings)
+    llm, _mode = _build_wiki_llm(settings)  # 위키 생성 = 기본 Haiku(저가)
     service = WikiGenerationService(llm, FilePromptRegistry(), repo)
 
     IssueFacetClassifier(reader, PostgresIssueRepository(), bus)  # 루프1: 신규 이슈 자동 분류
-    WikiAutoGenerator(service, reader, repo, embedder, bus)  # 루프2
+    WikiAutoGenerator(  # 루프2: 유형 게이트(문의 스킵)
+        service, reader, repo, embedder, bus, wiki_types=settings.wiki_type_set
+    )
     RelatedKnowledgePush(reader, repo, embedder, bus)  # 루프3-Push
     if settings.graph_backend == "neo4j":  # IssueClassified/CommitsLinked → Neo4j 그래프 증분
         graph = Neo4jGraphRepository(
