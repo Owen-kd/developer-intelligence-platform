@@ -131,12 +131,24 @@ DOMAIN_VOCAB: frozenset[str] = frozenset(
         "stats", "delivery", "user", "settings", "work",
     }
 )
-FEATURE_VOCAB: frozenset[str] = frozenset(
-    {
-        "online", "matching", "category", "template", "setinfo", "add-option",
-        "addcontent", "noti", "keyword-ai", "excel", "scrap", "option",
-    }
-)
+# 기능영역(중분류)은 도메인별로 다르다 — 백엔드 도메인 문서(gmp.openapi.2023/.ai/domains)에서 추출.
+# 도메인-스코프 검증으로 order 기능이 product 이슈에 붙는 것을 막는다.
+FEATURE_BY_DOMAIN: dict[str, frozenset[str]] = {
+    "product": frozenset(
+        {
+            "online", "matching", "category", "template", "setinfo", "add-option",
+            "addcontent", "noti", "keyword-ai", "excel", "scrap", "option",
+        }
+    ),
+    "order": frozenset(
+        {"order", "matching", "invoice", "as", "gift", "package", "tag", "manage", "excel"}
+    ),
+    "stock": frozenset(
+        {"base", "inventory", "depot", "set", "supplier", "style", "barcode", "excel"}
+    ),
+    "work": frozenset({"work", "result", "automatch", "scheduler", "excel"}),
+}
+FEATURE_VOCAB: frozenset[str] = frozenset().union(*FEATURE_BY_DOMAIN.values())
 ACTION_VOCAB: frozenset[str] = frozenset(
     {
         "등록", "수정", "삭제", "조회", "복사", "일괄수정", "매칭", "매칭해제",
@@ -151,9 +163,9 @@ CHANNEL_VOCAB: frozenset[str] = frozenset(
     }
 )
 
+# 고정 어휘 축(도메인/액션/채널). 기능영역은 도메인-스코프라 아래서 별도 처리.
 _LLM_AXES: tuple[tuple[str, frozenset[str], str], ...] = (
     ("domain", DOMAIN_VOCAB, UNKNOWN),
-    ("feature_area", FEATURE_VOCAB, UNKNOWN),
     ("action", ACTION_VOCAB, UNKNOWN),
     ("channel", CHANNEL_VOCAB, COMMON),
 )
@@ -164,6 +176,7 @@ def validate_llm_facets(raw: Mapping[str, object], current: Facets) -> Facets:
 
     - 규칙이 이미 채운 축(미상/공통 아님)은 LLM 값으로 덮지 않는다(규칙 우선).
     - LLM 값이 통제 어휘에 없으면 무시(자유생성 방지). 팀/영역/유형은 규칙 전용(보강 대상 아님).
+    - 기능영역은 **도메인-스코프**: 그 도메인의 기능영역만 허용(order 기능이 product 에 안 붙게).
     """
     updates: dict[str, str] = {}
     for axis, vocab, empty in _LLM_AXES:
@@ -172,6 +185,13 @@ def validate_llm_facets(raw: Mapping[str, object], current: Facets) -> Facets:
         value = raw.get(axis)
         if isinstance(value, str) and value in vocab:
             updates[axis] = value
+    # 기능영역: 도메인(방금 보강됐을 수도)에 맞는 어휘만 허용
+    if current.feature_area == UNKNOWN:
+        domain = updates.get("domain", current.domain)
+        allowed = FEATURE_BY_DOMAIN.get(domain, frozenset())
+        value = raw.get("feature_area")
+        if isinstance(value, str) and value in allowed:
+            updates["feature_area"] = value
     return replace(current, **updates) if updates else current
 
 

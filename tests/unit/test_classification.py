@@ -75,3 +75,16 @@ def test_validate_llm_rejects_out_of_vocab() -> None:
     raw = {"domain": "결제도메인", "feature_area": "새기능", "action": "짓기", "channel": "네이버"}
     out = validate_llm_facets(raw, base)
     assert out == base  # 통제 어휘 밖 값은 전부 무시(자유생성 방지)
+
+
+def test_feature_area_is_domain_scoped() -> None:
+    # order 도메인 이슈엔 order 기능영역(invoice)이 허용되지만,
+    order = validate_llm_facets(
+        {"feature_area": "invoice"}, Facets(domain="order", feature_area=UNKNOWN)
+    )
+    assert order.feature_area == "invoice"
+    # product 도메인 이슈엔 order 전용 기능영역(invoice)이 거부된다(오배정 방지)
+    product = validate_llm_facets(
+        {"feature_area": "invoice"}, Facets(domain="product", feature_area=UNKNOWN)
+    )
+    assert product.feature_area == UNKNOWN
