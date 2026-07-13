@@ -52,6 +52,16 @@ def test_matching_action_and_feature() -> None:
     assert f.action == "자동매칭"  # '자동매칭'이 '매칭'보다 우선
 
 
+def test_feature_rule_is_product_only() -> None:
+    # 주문 이슈가 '옵션'/'엑셀' 을 담아도 product 기능영역이 붙지 않는다(도메인-인지, LLM 대상)
+    order = classify_rule(["주문-오류-툴"], [], "PA20-9", summary="주문 옵션 엑셀 다운 오류")
+    assert order.domain == "order"
+    assert order.feature_area == UNKNOWN  # 규칙은 product 전용 → 미상
+    # product 는 여전히 규칙으로 채움
+    prod = classify_rule(["상품-오류-툴"], [], "PA20-10", summary="옵션 엑셀 오류")
+    assert prod.feature_area in ("option", "excel")
+
+
 def test_unknown_when_no_signal() -> None:
     f = classify_rule(["[1:1문의]일반문의"], [], "PA20-4")
     assert f.domain == "inquiry-as"  # '문의' 토큰

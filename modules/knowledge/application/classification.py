@@ -249,7 +249,12 @@ def classify_rule(
                 channel = market
                 break
 
-    feature_area = _first_keyword_match(signal, _FEATURE_RULES) or UNKNOWN
+    # 기능영역 규칙(_FEATURE_RULES)은 product 전용 키워드다 — product 도메인에만 적용해
+    # order/stock 이슈에 product 기능영역(option/scrap 등)이 오염되지 않게 한다(도메인-인지).
+    # 비-product 는 미상으로 두고 LLM 이 도메인-스코프 어휘로 채운다.
+    feature_area = UNKNOWN
+    if domain == "product":
+        feature_area = _first_keyword_match(signal, _FEATURE_RULES) or UNKNOWN
     action = _first_keyword_match(signal, _ACTION_RULES) or UNKNOWN
 
     return Facets(
