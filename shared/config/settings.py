@@ -3,9 +3,22 @@
 modules/ 는 이 설정을 직접 읽지 않고, infrastructure/ 계층이 사용한다.
 """
 
+import os
+import sys
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_model_cache_dir() -> str:
+    """OS별 사용자-쓰기가능 영구 캐시 경로(휘발성 /tmp·root 소유 경로 회피)."""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    return str(base / "dip" / "fastembed")
 
 
 class Settings(BaseSettings):
@@ -51,6 +64,11 @@ class Settings(BaseSettings):
     # 모델 변경 시 embedding_dim 과 009 마이그레이션 vector(N) 을 함께 맞춰야 한다.
     embedding_model: str = "intfloat/multilingual-e5-large"
     embedding_dim: int = 1024
+    # 로컬 모델(fastembed/리랭커) 캐시 경로. fastembed 기본 캐시는 /tmp(휘발성) → 재부팅 시
+    # 2.9GB 재다운로드 & 첫 질의 콜드스타트/타임아웃. OS별 영구 캐시 경로로 고정한다.
+    # macOS=~/Library/Caches, Linux=$XDG_CACHE_HOME|~/.cache. 환경변수 MODEL_CACHE_DIR 로 override.
+    # (INCIDENT: .ai/knowledge/incident/mcp-model-coldstart-timeout.md)
+    model_cache_dir: str = Field(default_factory=_default_model_cache_dir)
 
     # Reranker (하이브리드 검색 후 재정렬, 로컬 cross-encoder). 끄면 융합 순위 그대로.
     rerank_enabled: bool = True

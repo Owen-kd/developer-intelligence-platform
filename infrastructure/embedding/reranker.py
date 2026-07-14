@@ -7,13 +7,19 @@ bi-encoder(임베딩)보다 정밀하지만 느려서 상위 소수 후보에만
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
+import time
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from shared.logger import get_logger
+
 if TYPE_CHECKING:
     from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+_logger = get_logger("infra.reranker")
 
 
 class Reranker(ABC):
@@ -27,8 +33,10 @@ class Reranker(ABC):
 class FastEmbedReranker(Reranker):
     """로컬 fastembed cross-encoder. 모델은 최초 사용 시 지연 로딩(다운로드/캐시)."""
 
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, cache_dir: str | None = None) -> None:
         self._model_name = model_name
+        # 캐시 경로 고정(휘발성 /tmp 회피). None 이면 fastembed 기본값.
+        self._cache_dir = os.path.expanduser(cache_dir) if cache_dir else None
         self._model: TextCrossEncoder | None = None
         self._lock = threading.Lock()
 
@@ -38,7 +46,28 @@ class FastEmbedReranker(Reranker):
                 if self._model is None:
                     from fastembed.rerank.cross_encoder import TextCrossEncoder
 
-                    self._model = TextCrossEncoder(model_name=self._model_name)
+                    # 리랭커는 콜드로딩이 가장 무겁다(실측 병목) — 관측·실패기록.
+                    started = time.perf_counter()
+                    _logger.info(
+                        "reranker.model.loading", model=self._model_name, cache_dir=self._cache_dir
+                    )
+                    try:
+                        self._model = TextCrossEncoder(
+                            model_name=self._model_name, cache_dir=self._cache_dir
+                        )
+                    except Exception as exc:
+                        _logger.error(
+                            "reranker.model.load_failed",
+                            model=self._model_name,
+                            cache_dir=self._cache_dir,
+                            error=str(exc),
+                        )
+                        raise
+                    _logger.info(
+                        "reranker.model.loaded",
+                        model=self._model_name,
+                        elapsed_s=round(time.perf_counter() - started, 1),
+                    )
         return self._model
 
     async def rerank(self, query: str, documents: list[str]) -> list[float]:
@@ -66,4 +95,5 @@ def get_reranker() -> Reranker:
     """설정 기반 프로세스 단일 리랭커(warm 인스턴스 재사용)."""
     from shared.config.settings import get_settings
 
-    return FastEmbedReranker(get_settings().reranker_model)
+    settings = get_settings()
+    return FastEmbedReranker(settings.reranker_model, settings.model_cache_dir)

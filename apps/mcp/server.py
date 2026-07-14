@@ -12,6 +12,8 @@ Claude Desktop 연결: README/응답의 설정 JSON 참고.
 
 from __future__ import annotations
 
+import threading
+import time
 from functools import lru_cache
 
 from mcp.server.fastmcp import FastMCP
@@ -22,8 +24,11 @@ from infrastructure.embedding.client import get_embedder  # 프로세스 단일 
 from infrastructure.embedding.reranker import Reranker, get_reranker
 from infrastructure.neo4j.graph_repository import Neo4jGraphRepository
 from shared.config.settings import get_settings
+from shared.logger import get_logger
 
 mcp = FastMCP("dip-knowledge-library")
+
+_logger = get_logger("mcp.server")
 
 
 def _access_shelf_patterns() -> tuple[str, ...] | None:
@@ -162,7 +167,34 @@ async def graph_neighbors(jira_key: str) -> str:
     return "\n".join(lines)
 
 
+def _warmup() -> None:
+    """서버 기동 시 로컬 모델(임베더+리랭커)을 미리 로딩한다.
+
+    첫 질의의 콜드스타트/타임아웃을 없앤다. 실패해도 서버는 계속 뜨고(첫 질의 때 지연로딩
+    폴백) 침묵하지 않고 기록한다 — 재발 추적용.
+    INCIDENT: .ai/knowledge/incident/mcp-model-coldstart-timeout.md
+    """
+    import asyncio
+
+    async def _load() -> None:
+        await get_embedder().embed_query("warmup")
+        reranker = _reranker()
+        if reranker is not None:
+            await reranker.rerank("warmup", ["warmup"])
+
+    started = time.perf_counter()
+    _logger.info("mcp.warmup.start")
+    try:
+        asyncio.run(_load())
+    except Exception as exc:  # 헬스체크성 — 실패해도 진행하되 반드시 기록
+        _logger.error("mcp.warmup.failed", error=str(exc))
+        return
+    _logger.info("mcp.warmup.done", elapsed_s=round(time.perf_counter() - started, 1))
+
+
 def main() -> None:
+    # 모델을 백그라운드로 예열 — 서버는 즉시 기동, 첫 질의는 warm 모델을 쓴다.
+    threading.Thread(target=_warmup, name="mcp-warmup", daemon=True).start()
     mcp.run()
 
 

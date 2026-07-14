@@ -16,14 +16,19 @@ import asyncio
 import math
 import os
 import threading
+import time
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import TYPE_CHECKING
+
+from shared.logger import get_logger
 
 # HuggingFace 'xet' 가속 다운로드 백엔드를 끈다(모델은 최초 1회 캐시되면 그만).
 # xet 는 `~/.cache/huggingface/xet/logs` 권한 문제로 간헐 크래시 → 표준 다운로드로 우회.
 # (fastembed/huggingface_hub import 전에 설정되어야 효력. setdefault 로 사용자 지정은 존중.)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+_logger = get_logger("infra.embedding")
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
@@ -52,9 +57,11 @@ class FastEmbedEmbedder(Embedder):
     _QUERY_PREFIX = "query: "
     _DOC_PREFIX = "passage: "
 
-    def __init__(self, model_name: str, dim: int) -> None:
+    def __init__(self, model_name: str, dim: int, cache_dir: str | None = None) -> None:
         self._model_name = model_name
         self._dim = dim
+        # 캐시 경로 고정(휘발성 /tmp 회피). None 이면 fastembed 기본값.
+        self._cache_dir = os.path.expanduser(cache_dir) if cache_dir else None
         self._model: TextEmbedding | None = None
         self._lock = threading.Lock()  # executor 스레드 간 지연로딩 경쟁 방지
 
@@ -65,7 +72,28 @@ class FastEmbedEmbedder(Embedder):
                 if self._model is None:
                     from fastembed import TextEmbedding  # 지연 import(Fake 시 불필요)
 
-                    self._model = TextEmbedding(model_name=self._model_name)
+                    # 콜드스타트(로딩/다운로드)를 관측한다 — 실패 시 침묵하지 않고 기록(재발 추적).
+                    started = time.perf_counter()
+                    _logger.info(
+                        "embedder.model.loading", model=self._model_name, cache_dir=self._cache_dir
+                    )
+                    try:
+                        self._model = TextEmbedding(
+                            model_name=self._model_name, cache_dir=self._cache_dir
+                        )
+                    except Exception as exc:
+                        _logger.error(
+                            "embedder.model.load_failed",
+                            model=self._model_name,
+                            cache_dir=self._cache_dir,
+                            error=str(exc),
+                        )
+                        raise
+                    _logger.info(
+                        "embedder.model.loaded",
+                        model=self._model_name,
+                        elapsed_s=round(time.perf_counter() - started, 1),
+                    )
         return self._model
 
     @property
@@ -127,4 +155,6 @@ def get_embedder() -> Embedder:
     from shared.config.settings import get_settings
 
     settings = get_settings()
-    return FastEmbedEmbedder(settings.embedding_model, settings.embedding_dim)
+    return FastEmbedEmbedder(
+        settings.embedding_model, settings.embedding_dim, settings.model_cache_dir
+    )
