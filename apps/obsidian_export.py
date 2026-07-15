@@ -16,6 +16,7 @@ from pathlib import Path
 from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 from modules.knowledge.presentation.obsidian import (
     moc_notes,
+    standalone_vault_path,
     to_markdown,
     vault_path,
 )
@@ -55,21 +56,23 @@ async def export_vault(out_dir: str) -> ExportResult:
     skipped = 0
     index_entries: list[tuple[str, str, dict[str, str]]] = []
     for knowledge, jira_key, components, facets in wikis:
-        if not jira_key:
-            skipped += 1  # 파일명/링크 안정성을 위해 Jira 키 없는 위키는 건너뛴다
-            continue
-        related_keys = related_by_issue.get(knowledge.issue_id, [])
-        markdown = to_markdown(
-            knowledge,
-            jira_key=jira_key,
-            related_keys=related_keys,
-            components=components,
-            facets=facets,
-        )
-        note_path = out / vault_path(facets, jira_key)  # <도메인>/<기능영역>/<KEY>.md
+        if jira_key:
+            related_keys = related_by_issue.get(knowledge.issue_id, [])
+            markdown = to_markdown(
+                knowledge,
+                jira_key=jira_key,
+                related_keys=related_keys,
+                components=components,
+                facets=facets,
+            )
+            note_path = out / vault_path(facets, jira_key)  # <도메인>/<기능영역>/<KEY>.md
+            index_entries.append((jira_key, knowledge.summary, facets))
+        else:
+            # 이슈에 안 매인 verified 전문가 지식 → 도메인 트리 대신 '검증지식/' 폴더.
+            markdown = to_markdown(knowledge, components=components)
+            note_path = out / standalone_vault_path(knowledge)
         note_path.parent.mkdir(parents=True, exist_ok=True)
         note_path.write_text(markdown, encoding="utf-8")
-        index_entries.append((jira_key, knowledge.summary, facets))
         written += 1
 
     # 홈 계층: index(루트) → 도메인 MOC → 이슈. 그래프가 별 모양이 아니라 계층으로 뻗도록.

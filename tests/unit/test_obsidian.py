@@ -10,6 +10,7 @@ from modules.knowledge.presentation.obsidian import (
     index_markdown,
     jira_key_of,
     moc_notes,
+    standalone_vault_path,
     to_markdown,
     vault_filename,
     vault_path,
@@ -77,6 +78,27 @@ def test_to_markdown_has_facet_tags_and_breadcrumb() -> None:
     assert "domain/product" in md and "feature-area/option" in md
     assert "channel/쿠팡" in md
     assert "분류: 상품 > option > 수정" in md  # 도메인 한글 표시명
+
+
+def test_standalone_knowledge_without_issue() -> None:
+    # 이슈에 안 매인 verified 지식(sources 에 issue: 없음, issue_id 없음)
+    wiki = _wiki(
+        id="a235a252-80fa-5d6e-affc-8ac636b5013a",
+        issue_id="",
+        summary="[주문] 추가 컬럼(addcol) 기능",
+        sources=("expert-authored",),
+        source="verified",
+    )
+    # 전용 폴더 + slug + id8 파일명(도메인 트리에 섞이지 않음)
+    path = standalone_vault_path(wiki)
+    assert path.startswith("검증지식/")
+    assert path.endswith("-a235a252.md")
+    # 제목에 uuid 가 노출되지 않는다(요약만) + trust=verified
+    md = to_markdown(wiki)
+    assert md.startswith("---")
+    assert "# [주문] 추가 컬럼(addcol) 기능" in md
+    assert "a235a252" not in md.split("\n# ")[1].splitlines()[0]  # 제목 라인에 uuid 없음
+    assert "trust: verified" in md
 
 
 def test_vault_path_organizes_by_domain_feature() -> None:

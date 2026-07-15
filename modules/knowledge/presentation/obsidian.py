@@ -55,6 +55,15 @@ def vault_path(facets: Mapping[str, str], jira_key: str) -> str:
     return f"{domain}/{feature}/{vault_filename(jira_key)}"
 
 
+def standalone_vault_path(knowledge: Knowledge) -> str:
+    """이슈에 안 매인 verified 지식의 볼트 경로 — `검증지식/<slug>-<id8>.md`.
+
+    Jira 키가 없는 전문가 종합 지식(기능 설명 등)을 도메인 트리 대신 전용 폴더에 둔다.
+    파일명은 summary 앞부분 slug + id 접두어(안정적·요약 겹쳐도 충돌 회피)."""
+    stem = _FILENAME_RE.sub("-", knowledge.summary[:48]).strip("-")
+    return f"검증지식/{stem or 'wiki'}-{knowledge.id[:8]}.md"
+
+
 def _yaml_scalar(value: str) -> str:
     """YAML 스칼라를 큰따옴표로 안전하게 감싼다(제목의 '[', ':' 등 대비)."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
@@ -110,7 +119,8 @@ def to_markdown(
     `facets`(ADR-015) 가 주어지면 축별 태그(domain/feature/action/channel/type)를 붙여
     Obsidian 에서 분류축으로 필터·그래프 탐색이 가능하다.
     """
-    key = jira_key or jira_key_of(knowledge) or knowledge.id
+    real_key = jira_key or jira_key_of(knowledge)  # 실제 Jira 키(standalone 이면 None)
+    key = real_key or knowledge.id  # frontmatter/자기제외용 안정 식별자
     body = knowledge.body if isinstance(knowledge.body, dict) else {}
     facets = facets or {}
 
@@ -133,7 +143,8 @@ def to_markdown(
         "---",
     ]
 
-    lines = [f"# {key} — {knowledge.summary}", ""]
+    heading = f"# {real_key} — {knowledge.summary}" if real_key else f"# {knowledge.summary}"
+    lines = [heading, ""]
     if facets:
         crumb = " > ".join(
             [
