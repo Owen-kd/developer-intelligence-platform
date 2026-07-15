@@ -202,8 +202,13 @@ async def search_wiki_hybrid(
             (s.removeprefix("issue:") for s in knowledge.sources if s.startswith("issue:")),
             "-",
         )
+        scope = str(body.get("scope", "")).strip()
+        scope_target = str(body.get("scope_target", "")).strip()
+        scope_suffix = f"·{scope_target}" if scope_target else ""
+        scope_line = f"- 적용범위: {scope}{scope_suffix}\n" if scope else ""
         lines.append(
             f"## [{score:.2f}] {knowledge.summary} · {jira}\n"
+            f"{scope_line}"
             f"- 증상: {str(body.get('symptom', ''))[:160]}\n"
             f"- 근본원인: {str(body.get('root_cause', ''))[:240]}\n"
             f"- 해결: {str(body.get('resolution', ''))[:160]}\n"
