@@ -127,10 +127,25 @@ class Settings(BaseSettings):
     access_policy_file: str = "config/access/team_shelves.txt"
     dip_team: str = ""  # 이 프로세스(MCP 등)의 팀 — 접근제어 켜졌을 때 서가 제한에 사용
 
+    # 조회 전용 롤(dip_reader, 014 마이그레이션) — 질의 서빙(API/MCP)용 최소권한.
+    # 미설정 시 postgres_dsn 로 폴백(로컬/개발). 운영은 시크릿으로 주입.
+    postgres_reader_user: str = ""
+    postgres_reader_password: str = ""
+
     @property
     def postgres_dsn(self) -> str:
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def postgres_reader_dsn(self) -> str:
+        """서빙 계층용 조회전용 DSN. reader 크리덴셜 없으면 기본 dsn 폴백."""
+        if not (self.postgres_reader_user and self.postgres_reader_password):
+            return self.postgres_dsn
+        return (
+            f"postgresql+asyncpg://{self.postgres_reader_user}:{self.postgres_reader_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
