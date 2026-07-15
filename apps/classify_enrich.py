@@ -18,6 +18,7 @@ from modules.knowledge.application.classification import (
     classify_rule,
     validate_llm_facets,
 )
+from modules.knowledge.application.refinement import redact_pii
 from shared.config.settings import Settings, get_settings
 from shared.logger import get_logger
 
@@ -86,7 +87,8 @@ async def enrich_missing(limit: int | None = None) -> EnrichResult:
             targets -= 1
             break
         try:
-            user = f"제목: {summary}\n컴포넌트: {', '.join(components) or '-'}"
+            # 제목에 전화번호 등이 섞일 수 있어 LLM 전송 전 마스킹(비파괴).
+            user = redact_pii(f"제목: {summary}\n컴포넌트: {', '.join(components) or '-'}")
             raw = _parse_json(await llm.complete(system, user))
             merged = validate_llm_facets(raw, base)
         except Exception as exc:  # LLM/파싱 실패가 배치를 멈추지 않는다(이슈별 격리)

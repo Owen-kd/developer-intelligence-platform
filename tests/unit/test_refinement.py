@@ -7,6 +7,7 @@ from modules.knowledge.application.refinement import (
     filter_comments,
     is_noise_comment,
     is_wiki_worthy,
+    redact_pii,
 )
 
 
@@ -57,3 +58,33 @@ def test_assess_combines_filter_and_gate() -> None:
     assert result.kept_comments == ()
     assert result.dropped == 2
     assert result.worthy is False
+
+
+def test_redact_masks_structured_pii() -> None:
+    assert redact_pii("연락처 010-1234-5678 입니다") == "연락처 [전화번호] 입니다"
+    assert redact_pii("주민 900101-1234567 확인") == "주민 [주민번호] 확인"
+    assert redact_pii("카드 1234-5678-9012-3456 결제") == "카드 [카드번호] 결제"
+    assert redact_pii("사업자 123-45-67890 조회") == "사업자 [사업자번호] 조회"
+    assert redact_pii("메일 hong@example.com 로") == "메일 [이메일] 로"
+
+
+def test_redact_handles_korean_adjacency_without_space() -> None:
+    # 한국어는 공백 없이 붙는 경우가 많다 — `\b` 대신 lookaround 라 잡혀야 한다.
+    assert redact_pii("번호는01012345678이에요") == "번호는[전화번호]이에요"
+
+
+def test_redact_does_not_touch_order_or_code_numbers() -> None:
+    # 주문번호(13자리 연속)·컬럼값은 개인정보가 아니다 → 마스킹하지 않는다(오탐 방지).
+    text = "주문번호 2024051012345 상품코드 optAdd online.ts:5356 회귀"
+    assert redact_pii(text) == text
+
+
+def test_redact_masks_api_token() -> None:
+    assert redact_pii("토큰 sk-ant-api03-ABCdef12345 노출") == "토큰 [토큰] 노출"
+
+
+def test_redact_is_idempotent_and_noop_on_clean_text() -> None:
+    clean = "option_code 와 vendorItemId 비교 로직 회귀"
+    assert redact_pii(clean) == clean
+    once = redact_pii("전화 010-1234-5678")
+    assert redact_pii(once) == once  # 이미 마스킹된 텍스트는 그대로

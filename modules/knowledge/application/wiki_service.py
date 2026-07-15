@@ -15,14 +15,14 @@ import uuid
 from dip_platform.registry import PromptRegistry
 from dip_platform.workflow.validation import parse_json_output
 from infrastructure.llm.client import LLMClient
-from modules.knowledge.application.refinement import filter_comments
+from modules.knowledge.application.refinement import filter_comments, redact_pii
 from modules.knowledge.domain.entity import IssueSnapshot, Knowledge
 from modules.knowledge.domain.repository import KnowledgeRepository
 
 WIKI_TYPE = "wiki"
 _PROMPT = "knowledge/wiki"
 _REQUIRED = ("title", "symptom", "root_cause", "resolution", "content")
-_GROUNDING_CHARS = 1600  # 근거 문서 1건당 프롬프트에 넣는 최대 길이(프롬프트 폭주 방지)
+_GROUNDING_CHARS = 2400  # 근거 문서 1건당 프롬프트에 넣는 최대 길이(도메인 청크 손실 방지)
 
 
 def wiki_embedding_text(knowledge: Knowledge) -> str:
@@ -85,7 +85,8 @@ def _render_user(snapshot: IssueSnapshot, grounding: tuple[Knowledge, ...]) -> s
             content = str(item.body.get("content", "")) if isinstance(item.body, dict) else ""
             parts.append(f"### {item.summary}")
             parts.append(content[:_GROUNDING_CHARS])
-    return "\n".join(parts)
+    # 개인정보 마스킹 — 원본은 그대로 두고 LLM 으로 나가는 프롬프트에서만 제거(비파괴).
+    return redact_pii("\n".join(parts))
 
 
 def _to_knowledge(
@@ -95,22 +96,24 @@ def _to_knowledge(
 ) -> Knowledge:
     related = parsed.get("related_issues")
     related_list = [str(x) for x in related] if isinstance(related, list) else []
+    # LLM 출력 방어 마스킹 — 저장(→벡터/Obsidian/MCP) 전에 PII 를 한 번 더 거른다.
     body: dict[str, object] = {
-        "content": str(parsed["content"]),
-        "symptom": str(parsed["symptom"]),
-        "root_cause": str(parsed["root_cause"]),
-        "resolution": str(parsed["resolution"]),
-        "code_refs": str(parsed.get("code_refs", "")),
+        "content": redact_pii(str(parsed["content"])),
+        "symptom": redact_pii(str(parsed["symptom"])),
+        "root_cause": redact_pii(str(parsed["root_cause"])),
+        "resolution": redact_pii(str(parsed["resolution"])),
+        "code_refs": redact_pii(str(parsed.get("code_refs", ""))),
         "related_issues": related_list,
     }
-    sources = (f"issue:{snapshot.jira_key}",) + tuple(
+    raw_sources = (f"issue:{snapshot.jira_key}",) + tuple(
         source for item in grounding for source in item.sources
     )
+    sources = tuple(dict.fromkeys(raw_sources))  # 순서보존 dedup(근거 출처 중복 제거)
     return Knowledge(
         id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"wiki:{snapshot.jira_key}")),
         type=WIKI_TYPE,
         issue_id=snapshot.issue_id,
-        summary=str(parsed["title"]),
+        summary=redact_pii(str(parsed["title"])),
         body=body,
         sources=sources,
         source="derived",

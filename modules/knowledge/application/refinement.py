@@ -68,6 +68,44 @@ def filter_comments(comments: Sequence[str]) -> tuple[str, ...]:
     return tuple(kept)
 
 
+# --- PII 마스킹(개인정보 제거) — LLM 0, 결정적, 비파괴 ---
+# 원본(Postgres)은 절대 변경하지 않는다. LLM(Anthropic)·벡터DB·Obsidian·MCP 로 나가는
+# '파생 텍스트'에서만 구조가 뚜렷한 식별자를 가린다. 이름·주소 등 자유형 PII 는 정규식으로
+# 신뢰성 있게 못 잡으므로(오탐/미탐) 위키 프롬프트 지시(2차 방어)로 보완한다.
+# 원칙: 과다 마스킹은 무해, 미탐은 유출 → 애매하면 가린다.
+#
+# 경계는 `\b` 대신 숫자/식별자 lookaround 를 쓴다 — 한국어는 "번호는01012345678" 처럼
+# 공백 없이 붙는 경우가 많아 `\b`(단어경계)가 한글↔숫자 사이에서 잡히지 않기 때문.
+_PII_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # 주민등록번호: 6자리-성별숫자(1~4)+6자리. 하이픈+성별숫자 요구로 13자리 주문번호 오탐 방지.
+    (re.compile(r"(?<!\d)\d{6}-[1-4]\d{6}(?!\d)"), "[주민번호]"),
+    # 카드번호: 4-4-4-4 (하이픈/공백 구분).
+    (re.compile(r"(?<!\d)\d{4}[- ]\d{4}[- ]\d{4}[- ]\d{4}(?!\d)"), "[카드번호]"),
+    # 사업자등록번호: 3-2-5.
+    (re.compile(r"(?<!\d)\d{3}-\d{2}-\d{5}(?!\d)"), "[사업자번호]"),
+    # 휴대폰: 010/011/016~019 + 3~4 + 4 (구분자 선택).
+    (re.compile(r"(?<!\d)01[0-9][-. ]?\d{3,4}[-. ]?\d{4}(?!\d)"), "[전화번호]"),
+    # 이메일.
+    (
+        re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
+        "[이메일]",
+    ),
+    # API 토큰/시크릿(코멘트에 붙여넣기된 경우 방어).
+    (re.compile(r"(?:sk-ant-|ATATT|AKIA|ghp_)[A-Za-z0-9_=-]{8,}"), "[토큰]"),
+)
+
+
+def redact_pii(text: str) -> str:
+    """구조화된 개인정보(주민·카드·전화·이메일·사업자·토큰)를 마스킹한다(순수 함수).
+
+    원본은 변경하지 않는다 — LLM/벡터/공유로 나가는 파생 텍스트에만 적용한다.
+    이름·주소 등 자유형 PII 는 정규식 범위 밖(위키 프롬프트 지시로 2차 방어).
+    """
+    for pattern, mask in _PII_PATTERNS:
+        text = pattern.sub(mask, text)
+    return text
+
+
 def is_wiki_worthy(
     *, description: str, kept_comments: Sequence[str], commit_shas: Sequence[str]
 ) -> bool:

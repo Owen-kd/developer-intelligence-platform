@@ -14,6 +14,7 @@ from infrastructure.embedding.reranker import Reranker
 from infrastructure.postgres import connection as pg
 from modules.knowledge.application.diversify import mmr_select
 from modules.knowledge.application.fusion import hybrid_merge
+from modules.knowledge.application.refinement import redact_pii
 from modules.knowledge.application.wiki_service import WIKI_TYPE, wiki_embedding_text
 from modules.knowledge.infrastructure.repository import PostgresKnowledgeRepository
 
@@ -67,8 +68,8 @@ async def search_issues(
         shelf = ", ".join(r.components) if r.components else "-"
         lines.append(
             f"## {r.jira_key} · {r.status}/{r.priority} · 담당 {r.assignee or '-'} · 서가 {shelf}\n"
-            f"{r.summary}\n"
-            f"> {r.snippet.strip()}\n"
+            f"{redact_pii(r.summary)}\n"
+            f"> {redact_pii(r.snippet.strip())}\n"
             f"(링크된 커밋 {r.commits}건)\n"
         )
     return "\n".join(lines)
@@ -140,8 +141,8 @@ async def issue_detail(jira_key: str, shelf_patterns: tuple[str, ...] = ()) -> s
     out = [
         f"# {issue.jira_key} · {issue.type} · {issue.status}/{issue.priority}",
         f"담당 {issue.assignee or '-'} · 문의자 {issue.reporter or '-'} · 서가 {shelf}",
-        f"\n**{issue.summary}**\n",
-        issue.description or "(본문 없음)",
+        f"\n**{redact_pii(issue.summary)}**\n",
+        redact_pii(issue.description) if issue.description else "(본문 없음)",
         f"\n## 링크된 커밋 {len(commits)}건",
     ]
     for c in commits:
