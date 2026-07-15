@@ -233,22 +233,51 @@ async def _domain_issue_ids(
     return [row.id for row in rows]
 
 
-async def _grounding_for(keywords: tuple[str, ...], limit: int = 3) -> tuple[Knowledge, ...]:
-    """이슈 키워드와 겹치는 검증(verified) 지식을 근거로 뽑는다(없으면 빈 튜플)."""
+async def _issue_domain(issue_id: str) -> str:
+    """이슈의 저장된 도메인 facet(LLM 보강 반영, 없으면 빈 문자열). grounding 조회용."""
+    async with pg.get_engine().connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT domain FROM issue_facets WHERE issue_id = :i"), {"i": issue_id}
+            )
+        ).first()
+    return str(row[0]) if row and row[0] and row[0] != "미상" else ""
+
+
+async def _grounding_for(
+    domain: str, keywords: tuple[str, ...], limit: int = 5
+) -> tuple[Knowledge, ...]:
+    """근거(grounding) 지식을 뽑는다 — 도메인 구조 문서 + 주제 매칭 verified 지식.
+
+    1) 도메인 grounding 청크(sources 에 'domain:<domain>' 태그된 백엔드 문서) — 해당 도메인
+       전 이슈에 적용(근본원인 grounding). 2) 이슈 키워드와 겹치는 특정 verified 지식.
+    도메인 청크를 우선 정렬한다(둘 다 없으면 빈 튜플).
+    """
+    domtag = f"domain:{domain}" if domain else ""
     patterns = [f"%{keyword}%" for keyword in keywords if keyword.strip()]
-    if not patterns:
+    if not domtag and not patterns:
         return ()
     query = text(
         """
         SELECT id, type, issue_id, summary, body, sources, source, created_at
         FROM knowledge
-        WHERE source = 'verified'
-          AND (summary || ' ' || coalesce(body->>'content','')) ILIKE ANY(:pats)
-        ORDER BY created_at DESC LIMIT :lim
+        WHERE source = 'verified' AND type = 'wiki'
+          AND (
+            (:domtag <> '' AND jsonb_exists(sources, :domtag))
+            OR (:has_kw AND (summary || ' ' || coalesce(body->>'content','')) ILIKE ANY(:pats))
+          )
+        ORDER BY (:domtag <> '' AND jsonb_exists(sources, :domtag)) DESC, created_at DESC
+        LIMIT :lim
         """
     )
+    params: dict[str, object] = {
+        "domtag": domtag,
+        "has_kw": bool(patterns),
+        "pats": patterns or [""],
+        "lim": limit,
+    }
     async with pg.get_engine().connect() as conn:
-        rows = (await conn.execute(query, {"pats": patterns, "lim": limit})).all()
+        rows = (await conn.execute(query, params)).all()
     return tuple(
         Knowledge(
             id=str(row.id),
@@ -316,7 +345,8 @@ async def build_wikis(
             _logger.info("wiki.index_only", jira_key=snapshot.jira_key)
             continue
         try:
-            grounding = await _grounding_for(snapshot.components or ())
+            domain = await _issue_domain(issue_id)  # 도메인 grounding 조회용(저장 facet)
+            grounding = await _grounding_for(domain, snapshot.components or ())
             wiki = await service.generate(snapshot, grounding)
             vectors = await embedder.embed_documents([wiki_embedding_text(wiki)])
             await knowledge_repo.save_embedding(wiki.id, vectors[0])
@@ -451,7 +481,9 @@ class WikiAutoGenerator:
             _logger.info("wiki.auto_index_only", jira_key=snapshot.jira_key)
             return
         try:
-            wiki = await self._service.generate(snapshot)
+            # 도메인 grounding 주입(근본원인 강화). 신규 이슈라 facets.domain(규칙) 사용.
+            grounding = await _grounding_for(facets.domain, snapshot.components or ())
+            wiki = await self._service.generate(snapshot, grounding)
             vectors = await self._embedder.embed_documents([wiki_embedding_text(wiki)])
             await self._repo.save_embedding(wiki.id, vectors[0])
             self.generated += 1
