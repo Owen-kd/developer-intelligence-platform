@@ -49,19 +49,44 @@ def _safe_segment(name: str) -> str:
 
 
 def vault_path(facets: Mapping[str, str], jira_key: str) -> str:
-    """facet 기반 저장 경로 `<도메인>/<기능영역>/<JIRA-KEY>.md` (도메인>기능영역 조직화)."""
+    """facet 기반 저장 경로. 엔진팀(ENG-*) 이슈는 `엔진/<도메인>/` 로 묶고,
+    나머지(PA20 등)는 `<도메인>/<기능영역>/<JIRA-KEY>.md`."""
     domain = _safe_segment(domain_label(facets.get("domain", "미상")))
+    if jira_key.startswith("ENG-"):  # 엔진팀 이슈는 엔진 폴더로 묶는다
+        return f"엔진/{domain}/{vault_filename(jira_key)}"
     feature = _safe_segment(facets.get("feature_area", "미상"))
     return f"{domain}/{feature}/{vault_filename(jira_key)}"
 
 
-def standalone_vault_path(knowledge: Knowledge) -> str:
-    """이슈에 안 매인 verified 지식의 볼트 경로 — `검증지식/<slug>-<id8>.md`.
+def _verified_topic(sources: Sequence[str]) -> str:
+    """검증지식을 주제별 하위폴더로 묶기 위한 분류 — sources 태그 기반(엔진·스케줄러·물류 등)."""
+    joined = " ".join(sources)
+    if "backend-doc" in sources:
+        return "근거-백엔드문서"
+    if "notion:스케줄러-배치정리" in sources:
+        return "스케줄러"
+    if "spec:kctc-logistics" in joined:
+        return "KCTC물류"
+    if "spec:osse" in joined:
+        return "OSSE"
+    if "spec:sinsegae-logistics" in joined:
+        return "신세계물류"
+    if "engine" in sources or "domain:engine" in sources or "spec:coupang-product" in joined:
+        return "엔진"
+    if "notion:주요기능-주문재고" in sources:
+        return "주요기능"
+    return "기타"
 
-    Jira 키가 없는 전문가 종합 지식(기능 설명 등)을 도메인 트리 대신 전용 폴더에 둔다.
+
+def standalone_vault_path(knowledge: Knowledge) -> str:
+    """이슈에 안 매인 verified 지식의 볼트 경로 — `검증지식/<주제>/<slug>-<id8>.md`.
+
+    Jira 키가 없는 전문가 종합 지식(기능 설명 등)을 도메인 트리 대신 전용 폴더에 두되,
+    sources 태그로 주제별(엔진·스케줄러·물류 등) 하위폴더로 묶는다(평평한 mess 방지).
     파일명은 summary 앞부분 slug + id 접두어(안정적·요약 겹쳐도 충돌 회피)."""
+    topic = _safe_segment(_verified_topic(knowledge.sources))
     stem = _FILENAME_RE.sub("-", knowledge.summary[:48]).strip("-")
-    return f"검증지식/{stem or 'wiki'}-{knowledge.id[:8]}.md"
+    return f"검증지식/{topic}/{stem or 'wiki'}-{knowledge.id[:8]}.md"
 
 
 def _yaml_scalar(value: str) -> str:

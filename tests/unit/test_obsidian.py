@@ -101,6 +101,30 @@ def test_standalone_knowledge_without_issue() -> None:
     assert "trust: verified" in md
 
 
+def test_verified_grouped_by_topic_subfolder() -> None:
+    # 스케줄러 지식은 검증지식/스케줄러/ 하위로 묶인다
+    sched = _wiki(
+        id="aaaaaaaa-0000-0000-0000-000000000000", issue_id="", source="verified",
+        summary="admin.daily_scheduler",
+        sources=("expert-authored", "notion:스케줄러-배치정리", "job:admin"),
+    )
+    assert standalone_vault_path(sched).startswith("검증지식/스케줄러/")
+    # 엔진(쿠팡) 지식은 검증지식/엔진/ 하위로
+    coupang = _wiki(
+        id="bbbbbbbb-0000-0000-0000-000000000000", issue_id="", source="verified",
+        summary="쿠팡 로켓그로스",
+        sources=("expert-authored", "spec:coupang-product", "channel:쿠팡", "engine"),
+    )
+    assert standalone_vault_path(coupang).startswith("검증지식/엔진/")
+
+
+def test_eng_issues_grouped_under_engine_folder() -> None:
+    # 엔진팀(ENG-*) 이슈 위키는 엔진/ 폴더로 묶인다
+    assert vault_path(_FACETS, "ENG-6266").startswith("엔진/")
+    # PA20 은 기존 도메인/기능영역 트리 유지
+    assert not vault_path(_FACETS, "PA20-19864").startswith("엔진/")
+
+
 def test_vault_path_organizes_by_domain_feature() -> None:
     assert vault_path(_FACETS, "PA20-19864") == "상품/option/PA20-19864.md"
     assert vault_path({}, "PA20-1") == "미상/미상/PA20-1.md"  # facet 없으면 미상 폴더
